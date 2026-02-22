@@ -629,74 +629,217 @@
           <label>Token <span class="required">*</span></label>
           <input type="text" name="token" placeholder="Authentication Token" required>
         </div>
-        <div class="field">
-          <label>Webhook URL</label>
-          <input type="url" name="webhook_url" placeholder="https://example.com/webhook">
+        <h4 class="ui dividing header">Webhook Setup</h4>
+        <div class="ui top attached compact menu" id="addInstanceWebhookModeMenu">
+          <a class="active item" data-mode="quick">
+            <i class="bolt icon"></i>
+            Quick (Single Webhook)
+          </a>
+          <a class="item" data-mode="advanced">
+            <i class="sitemap icon"></i>
+            Advanced (Multi Webhooks)
+          </a>
         </div>
-        <div class="field">
-          <label>Events <span class="required">*</span></label>
-          <select name="events" id="webhookEventsInstance" class="ui fluid dropdown" multiple="" required>
-            <option value="">Select Events</option>
-            <!-- Messages and Communication -->
-            <option value="Message">Message</option>
-            <option value="UndecryptableMessage">Undecryptable Message</option>
-            <option value="Receipt">Receipt</option>
-            <option value="MediaRetry">Media Retry</option>
-            <!-- Groups and Contacts -->
-            <option value="GroupInfo">Group Info</option>
-            <option value="JoinedGroup">Joined Group</option>
-            <option value="Picture">Picture</option>
-            <option value="BlocklistChange">Blocklist Change</option>
-            <option value="Blocklist">Blocklist</option>
-            <!-- Connection and Session -->
-            <option value="Connected">Connected</option>
-            <option value="Disconnected">Disconnected</option>
-            <option value="ConnectFailure">Connect Failure</option>
-            <option value="KeepAliveRestored">Keep Alive Restored</option>
-            <option value="KeepAliveTimeout">Keep Alive Timeout</option>
-            <option value="LoggedOut">Logged Out</option>
-            <option value="ClientOutdated">Client Outdated</option>
-            <option value="TemporaryBan">Temporary Ban</option>
-            <option value="StreamError">Stream Error</option>
-            <option value="StreamReplaced">Stream Replaced</option>
-            <option value="PairSuccess">Pair Success</option>
-            <option value="PairError">Pair Error</option>
-            <option value="QR">QR</option>
-            <option value="QRScannedWithoutMultidevice">QR Scanned Without Multidevice</option>
-            <!-- Privacy and Settings -->
-            <option value="PrivacySettings">Privacy Settings</option>
-            <option value="PushNameSetting">Push Name Setting</option>
-            <option value="UserAbout">User About</option>
-            <!-- Synchronization and State -->
-            <option value="AppState">App State</option>
-            <option value="AppStateSyncComplete">App State Sync Complete</option>
-            <option value="HistorySync">History Sync</option>
-            <option value="OfflineSyncCompleted">Offline Sync Completed</option>
-            <option value="OfflineSyncPreview">Offline Sync Preview</option>
-            <!-- Calls -->
-            <option value="CallOffer">Call Offer</option>
-            <option value="CallAccept">Call Accept</option>
-            <option value="CallTerminate">Call Terminate</option>
-            <option value="CallOfferNotice">Call Offer Notice</option>
-            <option value="CallRelayLatency">Call Relay Latency</option>
-            <!-- Presence and Activity -->
-            <option value="Presence">Presence</option>
-            <option value="ChatPresence">Chat Presence</option>
-            <!-- Identity -->
-            <option value="IdentityChange">Identity Change</option>
-            <!-- Errors -->
-            <option value="CATRefreshError">CAT Refresh Error</option>
-            <!-- Newsletter (WhatsApp Channels) -->
-            <option value="NewsletterJoin">Newsletter Join</option>
-            <option value="NewsletterLeave">Newsletter Leave</option>
-            <option value="NewsletterMuteChange">Newsletter Mute Change</option>
-            <option value="NewsletterLiveUpdate">Newsletter Live Update</option>
-            <!-- Facebook/Meta Bridge -->
-            <option value="FBMessage">FB Message</option>
-            <!-- Special -->
-            <option value="All">All Events</option>
-          </select>
+        <div class="ui bottom attached segment">
+          <input type="hidden" name="webhook_mode" id="addInstanceWebhookMode" value="quick">
+
+          <div id="addInstanceQuickWebhookFields">
+            <div class="field">
+              <label>Webhook URL</label>
+              <input type="url" name="webhook_url" placeholder="https://example.com/webhook">
+            </div>
+            <div class="field">
+              <label>Events</label>
+              <select name="events" id="webhookEventsInstance" class="ui fluid dropdown" multiple="">
+                <option value="">Select Events</option>
+                <!-- Messages and Communication -->
+                <option value="Message">Message</option>
+                <option value="UndecryptableMessage">Undecryptable Message</option>
+                <option value="Receipt">Receipt</option>
+                <option value="MediaRetry">Media Retry</option>
+                <!-- Groups and Contacts -->
+                <option value="GroupInfo">Group Info</option>
+                <option value="JoinedGroup">Joined Group</option>
+                <option value="Picture">Picture</option>
+                <option value="BlocklistChange">Blocklist Change</option>
+                <option value="Blocklist">Blocklist</option>
+                <!-- Connection and Session -->
+                <option value="Connected">Connected</option>
+                <option value="Disconnected">Disconnected</option>
+                <option value="ConnectFailure">Connect Failure</option>
+                <option value="KeepAliveRestored">Keep Alive Restored</option>
+                <option value="KeepAliveTimeout">Keep Alive Timeout</option>
+                <option value="LoggedOut">Logged Out</option>
+                <option value="ClientOutdated">Client Outdated</option>
+                <option value="TemporaryBan">Temporary Ban</option>
+                <option value="StreamError">Stream Error</option>
+                <option value="StreamReplaced">Stream Replaced</option>
+                <option value="PairSuccess">Pair Success</option>
+                <option value="PairError">Pair Error</option>
+                <option value="QR">QR</option>
+                <option value="QRScannedWithoutMultidevice">QR Scanned Without Multidevice</option>
+                <!-- Privacy and Settings -->
+                <option value="PrivacySettings">Privacy Settings</option>
+                <option value="PushNameSetting">Push Name Setting</option>
+                <option value="UserAbout">User About</option>
+                <!-- Synchronization and State -->
+                <option value="AppState">App State</option>
+                <option value="AppStateSyncComplete">App State Sync Complete</option>
+                <option value="HistorySync">History Sync</option>
+                <option value="OfflineSyncCompleted">Offline Sync Completed</option>
+                <option value="OfflineSyncPreview">Offline Sync Preview</option>
+                <!-- Calls -->
+                <option value="CallOffer">Call Offer</option>
+                <option value="CallAccept">Call Accept</option>
+                <option value="CallTerminate">Call Terminate</option>
+                <option value="CallOfferNotice">Call Offer Notice</option>
+                <option value="CallRelayLatency">Call Relay Latency</option>
+                <!-- Presence and Activity -->
+                <option value="Presence">Presence</option>
+                <option value="ChatPresence">Chat Presence</option>
+                <!-- Identity -->
+                <option value="IdentityChange">Identity Change</option>
+                <!-- Errors -->
+                <option value="CATRefreshError">CAT Refresh Error</option>
+                <!-- Newsletter (WhatsApp Channels) -->
+                <option value="NewsletterJoin">Newsletter Join</option>
+                <option value="NewsletterLeave">Newsletter Leave</option>
+                <option value="NewsletterMuteChange">Newsletter Mute Change</option>
+                <option value="NewsletterLiveUpdate">Newsletter Live Update</option>
+                <!-- Facebook/Meta Bridge -->
+                <option value="FBMessage">FB Message</option>
+                <!-- Special -->
+                <option value="All">All Events</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="addInstanceAdvancedWebhookFields" style="display:none;">
+            <div class="ui info message">
+              <div class="header">Advanced Multi Webhooks</div>
+              <p>Add one or more webhook destinations with custom events and retry settings.</p>
+            </div>
+            <p class="add-instance-webhook-helper">
+              Tip: first destination is used as legacy-compatible primary webhook when possible.
+            </p>
+            <div id="addInstanceAdvancedWebhookList"></div>
+            <div class="ui tiny warning message" id="addInstanceAdvancedWebhookEmptyState" style="display:none;">
+              Add at least one webhook destination before submitting in advanced mode.
+            </div>
+            <button type="button" class="ui tiny primary button" id="addInstanceAddWebhookItemBtn">
+              <i class="plus icon"></i>
+              Add Webhook Destination
+            </button>
+          </div>
         </div>
+
+        <template id="addInstanceWebhookItemTemplate">
+          <div class="ui segment add-instance-webhook-item">
+            <div class="ui clearing basic segment" style="padding:0 0 .75rem 0;">
+              <h5 class="ui left floated header" style="margin:0;">Webhook Destination</h5>
+              <button type="button" class="ui right floated mini basic negative button add-instance-webhook-remove">
+                <i class="trash icon"></i>
+                Remove
+              </button>
+            </div>
+            <div class="field">
+              <label>Webhook URL <span class="required">*</span></label>
+              <input type="url" class="add-instance-webhook-url" placeholder="https://example.com/webhook">
+            </div>
+            <div class="field">
+              <label>Events</label>
+              <select class="ui fluid dropdown add-instance-webhook-events" multiple="">
+                <option value="">Select Events</option>
+                <!-- Messages and Communication -->
+                <option value="Message">Message</option>
+                <option value="UndecryptableMessage">Undecryptable Message</option>
+                <option value="Receipt">Receipt</option>
+                <option value="MediaRetry">Media Retry</option>
+                <!-- Groups and Contacts -->
+                <option value="GroupInfo">Group Info</option>
+                <option value="JoinedGroup">Joined Group</option>
+                <option value="Picture">Picture</option>
+                <option value="BlocklistChange">Blocklist Change</option>
+                <option value="Blocklist">Blocklist</option>
+                <!-- Connection and Session -->
+                <option value="Connected">Connected</option>
+                <option value="Disconnected">Disconnected</option>
+                <option value="ConnectFailure">Connect Failure</option>
+                <option value="KeepAliveRestored">Keep Alive Restored</option>
+                <option value="KeepAliveTimeout">Keep Alive Timeout</option>
+                <option value="LoggedOut">Logged Out</option>
+                <option value="ClientOutdated">Client Outdated</option>
+                <option value="TemporaryBan">Temporary Ban</option>
+                <option value="StreamError">Stream Error</option>
+                <option value="StreamReplaced">Stream Replaced</option>
+                <option value="PairSuccess">Pair Success</option>
+                <option value="PairError">Pair Error</option>
+                <option value="QR">QR</option>
+                <option value="QRScannedWithoutMultidevice">QR Scanned Without Multidevice</option>
+                <!-- Privacy and Settings -->
+                <option value="PrivacySettings">Privacy Settings</option>
+                <option value="PushNameSetting">Push Name Setting</option>
+                <option value="UserAbout">User About</option>
+                <!-- Synchronization and State -->
+                <option value="AppState">App State</option>
+                <option value="AppStateSyncComplete">App State Sync Complete</option>
+                <option value="HistorySync">History Sync</option>
+                <option value="OfflineSyncCompleted">Offline Sync Completed</option>
+                <option value="OfflineSyncPreview">Offline Sync Preview</option>
+                <!-- Calls -->
+                <option value="CallOffer">Call Offer</option>
+                <option value="CallAccept">Call Accept</option>
+                <option value="CallTerminate">Call Terminate</option>
+                <option value="CallOfferNotice">Call Offer Notice</option>
+                <option value="CallRelayLatency">Call Relay Latency</option>
+                <!-- Presence and Activity -->
+                <option value="Presence">Presence</option>
+                <option value="ChatPresence">Chat Presence</option>
+                <!-- Identity -->
+                <option value="IdentityChange">Identity Change</option>
+                <!-- Errors -->
+                <option value="CATRefreshError">CAT Refresh Error</option>
+                <!-- Newsletter (WhatsApp Channels) -->
+                <option value="NewsletterJoin">Newsletter Join</option>
+                <option value="NewsletterLeave">Newsletter Leave</option>
+                <option value="NewsletterMuteChange">Newsletter Mute Change</option>
+                <option value="NewsletterLiveUpdate">Newsletter Live Update</option>
+                <!-- Facebook/Meta Bridge -->
+                <option value="FBMessage">FB Message</option>
+                <!-- Special -->
+                <option value="All">All Events</option>
+              </select>
+            </div>
+            <div class="four fields">
+              <div class="field">
+                <div class="ui toggle checkbox add-instance-webhook-active-toggle">
+                  <input type="checkbox" class="add-instance-webhook-active" checked>
+                  <label>Active</label>
+                </div>
+              </div>
+              <div class="field">
+                <label>Retry Policy</label>
+                <select class="ui dropdown add-instance-webhook-retry-policy">
+                  <option value="exponential">Exponential</option>
+                  <option value="linear">Linear</option>
+                  <option value="constant">Constant</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Retry Delay (s)</label>
+                <input type="number" class="add-instance-webhook-retry-delay" min="1" value="30">
+              </div>
+              <div class="field">
+                <label>Attempts</label>
+                <input type="number" class="add-instance-webhook-retry-attempts" min="1" max="20" value="5">
+              </div>
+            </div>
+            <div class="field">
+              <label>Webhook HMAC Key (optional)</label>
+              <input type="password" class="add-instance-webhook-hmac" placeholder="Optional per-webhook HMAC key (min 32 chars)">
+            </div>
+          </div>
+        </template>
         <div class="field">
           <label>Message History</label>
           <input type="number" name="history" min="0" value="0" placeholder="0">

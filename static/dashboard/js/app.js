@@ -11,6 +11,7 @@ let webhookManagerState = {
   selectedId: null,
   mode: 'edit',
 };
+let addInstanceWebhookMode = 'quick';
 
 const WEBHOOK_RETRY_POLICY_DEFAULT = 'exponential';
 const WEBHOOK_RETRY_DELAY_DEFAULT = 30;
@@ -424,6 +425,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Proxy checkbox toggle is now initialized in DOMContentLoaded
 
   $('#addInstanceButton').click(function() {
+    resetAddInstanceWebhookUi();
     $('#addInstanceModal').modal({
       onApprove: function(e,pp) {
          $('#addInstanceForm').submit();
@@ -446,13 +448,6 @@ document.addEventListener('DOMContentLoaded', function() {
         rules: [{
           type: 'empty',
           prompt: 'Please enter an authentication token for the instance'
-        }]
-      },
-      events: {
-        identifier: 'events',
-        rules: [{
-          type: 'empty',
-          prompt: 'Please select at least one event'
         }]
       },
       history: {
@@ -526,7 +521,34 @@ document.addEventListener('DOMContentLoaded', function() {
         return false;
       }
 
-      addInstance(fields).then((result) => {
+      const webhookMode = $('#addInstanceWebhookMode').val() || 'quick';
+      let advancedWebhooks = [];
+
+      if (webhookMode === 'quick') {
+        const quickEvents = normalizeEventsForPayload(fields.events);
+        if (fields.webhook_url && quickEvents.length === 0) {
+          fields.events = ['All'];
+        }
+        if (!fields.webhook_url && quickEvents.length > 0) {
+          showError('Webhook URL is required if quick mode events are selected');
+          return false;
+        }
+      }
+
+      if (webhookMode === 'advanced') {
+        const collected = collectAdvancedWebhooks();
+        if (collected.error) {
+          showError(collected.error);
+          return false;
+        }
+        advancedWebhooks = collected.webhooks || [];
+      }
+
+      addInstance({
+        ...fields,
+        webhook_mode: webhookMode,
+        advanced_webhooks: advancedWebhooks,
+      }).then((result) => {
         if (result.success) {
           showSuccess('Instance created successfully');
           // Refresh the instances list
@@ -549,6 +571,7 @@ document.addEventListener('DOMContentLoaded', function() {
       $('#addInstanceS3Fields').hide();
       $('#addInstanceHmacKeyWarningMessage').hide();
       $('#addInstanceHmacKeyField').hide();
+      resetAddInstanceWebhookUi();
     }
   });
 
@@ -589,10 +612,12 @@ async function addInstance(data) {
   const hmacEnabled = data.hmac_enabled === 'on' || data.hmac_enabled === true;
   const hmacKey = hmacEnabled ? (data.hmac_key || '') : '';
 
+  const selectedEvents = normalizeEventsForPayload(data.events);
+
   const payload = {
     name: data.name,
     token: data.token,
-    events: data.events.join(','),
+    events: selectedEvents.join(','),
     webhook: data.webhook_url || '',
     expiration: 0,
     history: parseInt(data.history) || 0,
@@ -601,10 +626,18 @@ async function addInstance(data) {
     hmacKey: hmacKey
   };
 
-  if (data.webhook_url && data.events && data.events.length > 0) {
+  if (data.webhook_mode === 'advanced' && Array.isArray(data.advanced_webhooks)) {
+    payload.webhooks = data.advanced_webhooks;
+    if (!payload.webhook && payload.webhooks.length > 0) {
+      payload.webhook = payload.webhooks[0].url || '';
+    }
+    if (!payload.events && payload.webhooks.length > 0) {
+      payload.events = normalizeEventsForPayload(payload.webhooks[0].events || []).join(',');
+    }
+  } else if (data.webhook_url) {
     payload.webhooks = [{
       url: data.webhook_url,
-      events: normalizeEventsForPayload(data.events),
+      events: selectedEvents.length ? selectedEvents : ['All'],
       active: true,
       retries: {
         policy: WEBHOOK_RETRY_POLICY_DEFAULT,
@@ -646,6 +679,15 @@ function webhookModal() {
         return false;
       }
     }).modal('show');
+  });
+
+  $('#addInstanceWebhookModeMenu .item').on('click', function() {
+    const mode = $(this).data('mode');
+    setAddInstanceWebhookMode(mode);
+  });
+
+  $('#addInstanceAddWebhookItemBtn').on('click', function() {
+    addAdvancedWebhookItem();
   });
 }
 
@@ -917,10 +959,152 @@ async function setWebhook() {
 }
 
 function normalizeEventsForPayload(events) {
-  if (!Array.isArray(events)) return [];
-  const clean = events.filter(Boolean);
+  const eventArray = Array.isArray(events)
+    ? events
+    : (typeof events === 'string' && events.length ? events.split(',') : []);
+  const clean = eventArray.map((e) => String(e).trim()).filter(Boolean);
   if (clean.includes('All')) return ['All'];
   return [...new Set(clean)];
+}
+
+function setAddInstanceWebhookMode(mode) {
+  addInstanceWebhookMode = mode === 'advanced' ? 'advanced' : 'quick';
+  $('#addInstanceWebhookMode').val(addInstanceWebhookMode);
+  $('#addInstanceWebhookModeMenu .item').removeClass('active');
+  $(`#addInstanceWebhookModeMenu .item[data-mode="${addInstanceWebhookMode}"]`).addClass('active');
+
+  if (addInstanceWebhookMode === 'advanced') {
+    $('#addInstanceQuickWebhookFields').hide();
+    $('#addInstanceAdvancedWebhookFields').show();
+    if (document.querySelectorAll('#addInstanceAdvancedWebhookList .add-instance-webhook-item').length === 0) {
+      addAdvancedWebhookItem();
+    }
+    return;
+  }
+
+  $('#addInstanceAdvancedWebhookFields').hide();
+  $('#addInstanceQuickWebhookFields').show();
+}
+
+function addAdvancedWebhookItem(initial = {}) {
+  const template = document.getElementById('addInstanceWebhookItemTemplate');
+  const list = document.getElementById('addInstanceAdvancedWebhookList');
+  if (!template || !list) return;
+
+  const fragment = template.content.cloneNode(true);
+  list.appendChild(fragment);
+
+  const appended = list.lastElementChild;
+  if (!appended) return;
+
+  const urlInput = appended.querySelector('.add-instance-webhook-url');
+  const eventsSelect = appended.querySelector('.add-instance-webhook-events');
+  const activeInput = appended.querySelector('.add-instance-webhook-active');
+  const retryPolicy = appended.querySelector('.add-instance-webhook-retry-policy');
+  const retryDelay = appended.querySelector('.add-instance-webhook-retry-delay');
+  const retryAttempts = appended.querySelector('.add-instance-webhook-retry-attempts');
+  const hmacInput = appended.querySelector('.add-instance-webhook-hmac');
+
+  if (urlInput) urlInput.value = initial.url || '';
+  if (activeInput) activeInput.checked = initial.active !== false;
+  if (retryPolicy) retryPolicy.value = initial.retries?.policy || WEBHOOK_RETRY_POLICY_DEFAULT;
+  if (retryDelay) retryDelay.value = initial.retries?.delaySeconds || WEBHOOK_RETRY_DELAY_DEFAULT;
+  if (retryAttempts) retryAttempts.value = initial.retries?.attempts || WEBHOOK_RETRY_ATTEMPTS_DEFAULT;
+  if (hmacInput) hmacInput.value = initial.hmac?.key || '';
+
+  if (eventsSelect) {
+    $(eventsSelect).dropdown({
+      onChange: function(value) {
+        const values = normalizeEventsForPayload(value);
+        if (values.includes('All')) {
+          $(eventsSelect).dropdown('clear');
+          $(eventsSelect).dropdown('set selected', 'All');
+        }
+      }
+    });
+    const selectedEvents = normalizeEventsForPayload(initial.events || []);
+    if (selectedEvents.length) {
+      $(eventsSelect).dropdown('set selected', selectedEvents);
+    }
+  }
+
+  const activeToggle = appended.querySelector('.add-instance-webhook-active-toggle');
+  if (activeToggle) {
+    $(activeToggle).checkbox();
+  }
+
+  if (retryPolicy) {
+    $(retryPolicy).dropdown();
+  }
+
+  const removeButton = appended.querySelector('.add-instance-webhook-remove');
+  if (removeButton) {
+    removeButton.addEventListener('click', () => {
+      appended.remove();
+      toggleAdvancedWebhookEmptyState();
+    });
+  }
+
+  toggleAdvancedWebhookEmptyState();
+}
+
+function toggleAdvancedWebhookEmptyState() {
+  const emptyState = document.getElementById('addInstanceAdvancedWebhookEmptyState');
+  if (!emptyState) return;
+  const count = document.querySelectorAll('#addInstanceAdvancedWebhookList .add-instance-webhook-item').length;
+  emptyState.style.display = count === 0 ? '' : 'none';
+}
+
+function collectAdvancedWebhooks() {
+  const rows = document.querySelectorAll('#addInstanceAdvancedWebhookList .add-instance-webhook-item');
+  if (!rows.length) {
+    return { error: 'Please add at least one webhook destination in advanced mode.' };
+  }
+
+  const webhooks = [];
+  for (const row of rows) {
+    row.classList.remove('error');
+    const url = row.querySelector('.add-instance-webhook-url')?.value?.trim() || '';
+    if (!url) {
+      row.classList.add('error');
+      return { error: 'Each advanced webhook destination must have a URL.' };
+    }
+
+    const eventsRaw = $(row.querySelector('.add-instance-webhook-events')).dropdown('get value');
+    const events = normalizeEventsForPayload(eventsRaw);
+    const hmacKey = row.querySelector('.add-instance-webhook-hmac')?.value?.trim() || '';
+    if (hmacKey && hmacKey.length < 32) {
+      row.classList.add('error');
+      return { error: `Webhook HMAC for ${url} must be at least 32 characters long.` };
+    }
+
+    const payload = {
+      url,
+      events: events.length ? events : ['All'],
+      active: !!row.querySelector('.add-instance-webhook-active')?.checked,
+      retries: {
+        policy: row.querySelector('.add-instance-webhook-retry-policy')?.value || WEBHOOK_RETRY_POLICY_DEFAULT,
+        delaySeconds: parseInt(row.querySelector('.add-instance-webhook-retry-delay')?.value, 10) || WEBHOOK_RETRY_DELAY_DEFAULT,
+        attempts: parseInt(row.querySelector('.add-instance-webhook-retry-attempts')?.value, 10) || WEBHOOK_RETRY_ATTEMPTS_DEFAULT,
+      },
+      customHeaders: [],
+    };
+
+    if (hmacKey) {
+      payload.hmac = { key: hmacKey };
+    }
+
+    webhooks.push(payload);
+  }
+
+  return { webhooks };
+}
+
+function resetAddInstanceWebhookUi() {
+  const list = document.getElementById('addInstanceAdvancedWebhookList');
+  if (list) list.innerHTML = '';
+  setAddInstanceWebhookMode('quick');
+  toggleAdvancedWebhookEmptyState();
 }
 
 function getWebhookHeadersFromEditor() {

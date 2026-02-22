@@ -272,6 +272,37 @@ a#menulogout, a:visited#menulogout {
   margin-bottom: 8px;
 }
 
+/* Add Instance - Hybrid Webhook Builder */
+#addInstanceWebhookModeMenu {
+  border-bottom: 1px solid rgba(0, 168, 132, 0.15) !important;
+}
+
+#addInstanceWebhookModeMenu .item.active {
+  background: rgba(0, 168, 132, 0.08) !important;
+  color: var(--secondary-color) !important;
+  font-weight: 700 !important;
+}
+
+.add-instance-webhook-helper {
+  color: #5f6b74;
+  font-size: .9rem;
+  margin: .2rem 0 .8rem;
+}
+
+.add-instance-webhook-item {
+  border: 1px solid rgba(0, 168, 132, 0.2) !important;
+  box-shadow: 0 8px 20px rgba(7, 94, 84, 0.06) !important;
+}
+
+.add-instance-webhook-item.error {
+  border-color: rgba(219, 40, 40, 0.8) !important;
+  box-shadow: 0 0 0 2px rgba(219, 40, 40, 0.15) !important;
+}
+
+.add-instance-webhook-item .ui.clearing.segment {
+  margin-bottom: .75rem !important;
+}
+
 .ui.modal > .actions {
   border-radius: 0 0 20px 20px !important;
   background-color: rgba(248, 248, 248, 0.8) !important;

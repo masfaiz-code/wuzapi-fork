@@ -52,9 +52,43 @@ Response:
 
 Adds a new user
 
+Supports both webhook styles:
+
+- Legacy primary webhook fields: `webhook` + `events`
+- Multi-webhook payload: `webhooks[]`
+
+When using `webhooks[]`, the first item can act as legacy-compatible primary destination.
+
 Example Request:
 ```
 curl -s -X POST -H 'Authorization: {{WUZAPI_ADMIN_TOKEN}}' -H 'Content-Type: application/json' --data '{"name":"usuario2","token":"token2","webhook":"https://example.com/webhook2","events":"Message,ReadReceipt"}' http://localhost:8080/admin/users
+```
+
+Example Request (multi webhooks):
+```bash
+curl -s -X POST -H 'Authorization: {{WUZAPI_ADMIN_TOKEN}}' -H 'Content-Type: application/json' \
+  --data '{
+    "name":"usuario2",
+    "token":"token2",
+    "webhook":"https://example.com/webhook-primary",
+    "events":"All",
+    "webhooks":[
+      {
+        "url":"https://example.com/webhook-primary",
+        "events":["All"],
+        "active":true,
+        "retries":{"policy":"exponential","delaySeconds":30,"attempts":5}
+      },
+      {
+        "url":"https://example.com/webhook-orders",
+        "events":["Message","Receipt"],
+        "active":true,
+        "retries":{"policy":"linear","delaySeconds":10,"attempts":3},
+        "customHeaders":[{"name":"x-app","value":"orders"}]
+      }
+    ]
+  }' \
+  http://localhost:8080/admin/users
 ```
 
 Response:
@@ -109,6 +143,37 @@ You can create a user with optional proxy and S3 storage configuration. All fiel
   - `retentionDays` (integer): Number of days to retain files.
 
 If you omit `proxyConfig` or `s3Config`, the user will be created without proxy or S3 integration, maintaining full backward compatibility.
+
+## Update User
+
+*PUT /admin/users/{id}*
+
+Updates an existing user by ID.
+
+Supports both legacy webhook fields (`webhook`, `events`) and modern `webhooks[]` payload.
+
+Example Request:
+```bash
+curl -s -X PUT -H 'Authorization: {{WUZAPI_ADMIN_TOKEN}}' -H 'Content-Type: application/json' \
+  --data '{
+    "name":"usuario2-updated",
+    "webhooks":[
+      {
+        "url":"https://example.com/webhook-primary",
+        "events":["All"],
+        "active":true,
+        "retries":{"policy":"exponential","delaySeconds":30,"attempts":5}
+      },
+      {
+        "url":"https://example.com/webhook-audit",
+        "events":["Message","HistorySync"],
+        "active":true,
+        "retries":{"policy":"constant","delaySeconds":5,"attempts":5}
+      }
+    ]
+  }' \
+  http://localhost:8080/admin/users/2
+```
 
 ## Delete User 
 

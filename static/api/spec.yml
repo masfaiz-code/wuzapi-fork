@@ -106,7 +106,11 @@ paths:
       tags:
         - Admin
       summary: Create a new user
-      description: Add a new user to the database.
+      description: |
+        Add a new user to the database.
+
+        Supports both legacy single-webhook fields (`webhook`, `events`) and modern multi-webhook payload (`webhooks[]`).
+        Legacy fields remain backward compatible.
       security:
         - AdminAuth: []
       requestBody:
@@ -115,6 +119,42 @@ paths:
           application/json:
             schema:
               $ref: '#/definitions/CreateUser'
+            examples:
+              legacySingleWebhook:
+                summary: Legacy single webhook payload
+                value:
+                  name: "John Doe"
+                  token: "1234ABCD"
+                  webhook: "https://webhook.site/legacy"
+                  events: "All"
+              advancedMultiWebhook:
+                summary: Multi-webhook payload
+                value:
+                  name: "John Doe"
+                  token: "1234ABCD"
+                  webhook: "https://webhook.site/primary"
+                  events: "All"
+                  webhooks:
+                    - url: "https://webhook.site/primary"
+                      events: ["All"]
+                      active: true
+                      retries:
+                        policy: exponential
+                        delaySeconds: 30
+                        attempts: 5
+                      customHeaders:
+                        - name: x-app
+                          value: primary
+                    - url: "https://webhook.site/orders"
+                      events: ["Message", "Receipt"]
+                      active: true
+                      retries:
+                        policy: linear
+                        delaySeconds: 10
+                        attempts: 3
+                      customHeaders:
+                        - name: x-app
+                          value: orders
       responses:
         201:
           description: User created
@@ -189,6 +229,63 @@ paths:
             application/json:
               schema:
                 example: {"code":200,"data":{"id":"6b927654cada7635a4586bf8fad260a3"},"details":"User deleted successfully","success":true}
+    put:
+      tags:
+        - Admin
+      summary: Update an existing user
+      description: |
+        Updates user fields by ID.
+
+        Supports both legacy single-webhook fields (`webhook`, `events`) and modern multi-webhook payload (`webhooks[]`).
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID of the user to update
+          schema:
+            type: string
+            example: 4e4942c7dee1deef99ab8fd9f7350de5
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/UpdateUser'
+            examples:
+              updateLegacyWebhook:
+                summary: Update using legacy webhook fields
+                value:
+                  name: "John Doe"
+                  webhook: "https://webhook.site/legacy-updated"
+                  events: "Message,Receipt"
+              updateMultiWebhook:
+                summary: Update using multi-webhook payload
+                value:
+                  name: "John Doe"
+                  webhooks:
+                    - url: "https://webhook.site/primary"
+                      events: ["All"]
+                      active: true
+                      retries:
+                        policy: exponential
+                        delaySeconds: 30
+                        attempts: 5
+                    - url: "https://webhook.site/audit"
+                      events: ["Message", "HistorySync"]
+                      active: true
+                      retries:
+                        policy: constant
+                        delaySeconds: 5
+                        attempts: 5
+      responses:
+        200:
+          description: User updated
+          content:
+            application/json:
+              schema:
+                example: {"code":200,"data":{"id":"4e4942c7dee1deef99ab8fd9f7350de5","name":"John Doe","webhook":"https://webhook.site/primary","events":"All"},"success":true}
   /admin/users/{id}/full:
     delete:
       tags:
@@ -2231,6 +2328,79 @@ definitions:
         example: 0
         description: "Number of messages to store in history per chat for this user. 0 means no history is saved, any positive number enables history storage for that many messages per chat. Default is 0"
         default: 0
+      webhooks:
+        type: array
+        description: "Optional multi-webhook destinations for this user. Backward compatible with legacy webhook/events fields."
+        items:
+          $ref: '#/definitions/MultiWebhookCreate'
+
+  UpdateUser:
+    type: object
+    properties:
+      name:
+        type: string
+        example: John Doe
+      token:
+        type: string
+        example: "1234ABCD"
+      webhook:
+        type: string
+        example: "https://webhook.site/1234567890"
+        description: "Legacy primary webhook URL"
+      events:
+        type: string
+        example: "All"
+        description: "Legacy primary webhook events"
+      proxyConfig:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+            example: true
+          proxyURL:
+            type: string
+            example: "https://serverproxy.com:9080"
+      s3Config:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+            example: true
+          endpoint:
+            type: string
+            example: "https://s3.amazonaws.com"
+          region:
+            type: string
+            example: "us-east-1"
+          bucket:
+            type: string
+            example: "my-bucket"
+          accessKey:
+            type: string
+            example: "1234567890"
+          secretKey:
+            type: string
+            example: "1234567890"
+          pathStyle:
+            type: boolean
+            example: true
+          publicURL:
+            type: string
+            example: "https://s3.amazonaws.com"
+          mediaDelivery:
+            type: string
+            example: "both"
+          retentionDays:
+            type: integer
+            example: 30
+      history:
+        type: integer
+        example: 0
+      webhooks:
+        type: array
+        description: "Optional multi-webhook destinations for this user"
+        items:
+          $ref: '#/definitions/MultiWebhookCreate'
 
   DeleteUser:
     type: object
