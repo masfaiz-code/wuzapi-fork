@@ -402,10 +402,8 @@ func (s *server) ensurePrimaryLegacyWebhook(userID string) (*UserWebhook, error)
 	}
 
 	nowExpr := dbNowExpression(s.db.DriverName())
-	insert := "INSERT INTO user_webhooks (id, user_id, url, events, active, retry_policy, retry_delay_seconds, retry_attempts, custom_headers, is_primary_legacy, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, " + nowExpr + ", " + nowExpr + ")"
-	if s.db.DriverName() == "sqlite" {
-		insert = sqliteRebind(insert, 10)
-	}
+	insert := "INSERT INTO user_webhooks (id, user_id, url, events, active, retry_policy, retry_delay_seconds, retry_attempts, custom_headers, is_primary_legacy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + nowExpr + ", " + nowExpr + ")"
+	insert = s.db.Rebind(insert)
 
 	active := strings.TrimSpace(legacyURL) != ""
 	_, err = s.db.Exec(insert,
@@ -583,10 +581,8 @@ func (s *server) upsertPrimaryLegacyWebhook(userID string, payload WebhookPayloa
 	}
 
 	nowExpr := dbNowExpression(s.db.DriverName())
-	query := "UPDATE user_webhooks SET url=$1, events=$2, active=$3, hmac_key=$4, retry_policy=$5, retry_delay_seconds=$6, retry_attempts=$7, custom_headers=$8, updated_at=" + nowExpr + " WHERE id=$9 AND user_id=$10"
-	if s.db.DriverName() == "sqlite" {
-		query = sqliteRebind(query, 10)
-	}
+	query := "UPDATE user_webhooks SET url=?, events=?, active=?, hmac_key=?, retry_policy=?, retry_delay_seconds=?, retry_attempts=?, custom_headers=?, updated_at=" + nowExpr + " WHERE id=? AND user_id=?"
+	query = s.db.Rebind(query)
 
 	_, err = s.db.Exec(
 		query,
@@ -653,10 +649,8 @@ func (s *server) createWebhook(userID string, payload WebhookPayload) (*UserWebh
 	}
 
 	nowExpr := dbNowExpression(s.db.DriverName())
-	query := "INSERT INTO user_webhooks (id, user_id, url, events, active, hmac_key, retry_policy, retry_delay_seconds, retry_attempts, custom_headers, is_primary_legacy, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, " + nowExpr + ", " + nowExpr + ")"
-	if s.db.DriverName() == "sqlite" {
-		query = sqliteRebind(query, 11)
-	}
+	query := "INSERT INTO user_webhooks (id, user_id, url, events, active, hmac_key, retry_policy, retry_delay_seconds, retry_attempts, custom_headers, is_primary_legacy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + nowExpr + ", " + nowExpr + ")"
+	query = s.db.Rebind(query)
 
 	_, err = s.db.Exec(
 		query,
@@ -748,10 +742,8 @@ func (s *server) updateWebhook(userID, webhookID string, payload WebhookPayload)
 	}
 
 	nowExpr := dbNowExpression(s.db.DriverName())
-	query := "UPDATE user_webhooks SET url=$1, events=$2, active=$3, hmac_key=$4, retry_policy=$5, retry_delay_seconds=$6, retry_attempts=$7, custom_headers=$8, updated_at=" + nowExpr + " WHERE id=$9 AND user_id=$10"
-	if s.db.DriverName() == "sqlite" {
-		query = sqliteRebind(query, 10)
-	}
+	query := "UPDATE user_webhooks SET url=?, events=?, active=?, hmac_key=?, retry_policy=?, retry_delay_seconds=?, retry_attempts=?, custom_headers=?, updated_at=" + nowExpr + " WHERE id=? AND user_id=?"
+	query = s.db.Rebind(query)
 
 	_, err = s.db.Exec(
 		query,
