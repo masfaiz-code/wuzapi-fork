@@ -311,10 +311,19 @@ func createMigrationsTable(db *sqlx.DB) error {
 
 	switch db.DriverName() {
 	case "postgres":
+		var currentSchema string
+		if schemaErr := db.Get(&currentSchema, `SELECT current_schema()`); schemaErr == nil {
+			fmt.Printf("[migration-debug] postgres current_schema=%s\n", currentSchema)
+		}
+		var searchPath string
+		if searchErr := db.Get(&searchPath, `SHOW search_path`); searchErr == nil {
+			fmt.Printf("[migration-debug] postgres search_path=%s\n", searchPath)
+		}
 		err = db.Get(&tableExists, `
 			SELECT EXISTS (
 				SELECT 1 FROM information_schema.tables 
 				WHERE table_name = 'migrations'
+				AND table_schema = current_schema()
 			)`)
 	case "sqlite":
 		err = db.Get(&tableExists, `
@@ -331,18 +340,30 @@ func createMigrationsTable(db *sqlx.DB) error {
 	}
 
 	if tableExists {
+		fmt.Printf("[migration-debug] migrations table already exists in active schema\n")
 		return nil
 	}
 
-	_, err = db.Exec(`
+	if db.DriverName() == "postgres" {
+		_, err = db.Exec(`
+			CREATE TABLE IF NOT EXISTS migrations (
+				id INTEGER PRIMARY KEY,
+				name TEXT NOT NULL,
+				applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			)`)
+	} else {
+		_, err = db.Exec(`
 		CREATE TABLE migrations (
 			id INTEGER PRIMARY KEY,
 			name TEXT NOT NULL,
 			applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create migrations table: %w", err)
 	}
+
+	fmt.Printf("[migration-debug] migrations table created successfully\n")
 
 	return nil
 }
@@ -355,6 +376,15 @@ func getAppliedMigrations(db *sqlx.DB) (map[int]struct{}, error) {
 	}
 
 	err := db.Select(&rows, "SELECT id, name FROM migrations ORDER BY id ASC")
+	if err != nil {
+		fmt.Printf("[migration-debug] failed selecting applied migrations: %v\n", err)
+		if db.DriverName() == "postgres" {
+			if createErr := createMigrationsTable(db); createErr != nil {
+				return nil, fmt.Errorf("failed to recover migrations table after select failure: %w", createErr)
+			}
+			err = db.Select(&rows, "SELECT id, name FROM migrations ORDER BY id ASC")
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query applied migrations: %w", err)
 	}
