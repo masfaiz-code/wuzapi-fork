@@ -192,6 +192,79 @@ Response:
 
 ---
 
+## Multi Webhooks (WAHA-style)
+
+Besides the legacy `/webhook` endpoint (primary webhook), WuzAPI also supports multiple webhook destinations per user via `/webhooks`.
+
+Each webhook item supports:
+
+* `url`
+* `events[]`
+* `active`
+* `hmac.key` (optional, per webhook)
+* `retries.policy` (`exponential` | `linear` | `constant`)
+* `retries.delaySeconds`
+* `retries.attempts`
+* `customHeaders[]`
+
+### List webhooks
+
+Endpoint: _/webhooks_
+
+Method: **GET**
+
+```bash
+curl -s -X GET -H 'Token: 1234ABCD' http://localhost:8080/webhooks
+```
+
+### Create webhook item
+
+Endpoint: _/webhooks_
+
+Method: **POST**
+
+```bash
+curl -s -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' \
+  --data '{
+    "url":"https://example.net/orders",
+    "events":["Message","Receipt"],
+    "active":true,
+    "retries":{"policy":"linear","delaySeconds":10,"attempts":3},
+    "customHeaders":[{"name":"x-app","value":"orders"}]
+  }' \
+  http://localhost:8080/webhooks
+```
+
+### Update webhook item
+
+Endpoint: _/webhooks/{id}_
+
+Method: **PUT**
+
+```bash
+curl -s -X PUT -H 'Token: 1234ABCD' -H 'Content-Type: application/json' \
+  --data '{
+    "active":true,
+    "events":["All"],
+    "retries":{"policy":"constant","delaySeconds":5,"attempts":5}
+  }' \
+  http://localhost:8080/webhooks/wh_123
+```
+
+### Delete webhook item
+
+Endpoint: _/webhooks/{id}_
+
+Method: **DELETE**
+
+```bash
+curl -s -X DELETE -H 'Token: 1234ABCD' http://localhost:8080/webhooks/wh_123
+```
+
+> Note: Primary legacy webhook cannot be deleted via `/webhooks/{id}`. Use `DELETE /webhook` for that compatibility behavior.
+
+---
+
 ## HMAC Configuration
 
 The following _HMAC_ endpoints are used to configure and manage HMAC keys for webhook security. HMAC signatures verify that webhooks are authentic and haven't been tampered with.

@@ -222,6 +222,56 @@ a#menulogout, a:visited#menulogout {
   padding: 1.5em !important;
 }
 
+/* Webhook Manager */
+.webhook-manager-grid {
+  min-height: 430px;
+}
+
+.webhook-manager-list-segment,
+.webhook-editor-segment {
+  border-radius: 14px !important;
+  border: 1px solid rgba(0, 168, 132, 0.15) !important;
+  box-shadow: 0 6px 20px rgba(7, 94, 84, 0.08) !important;
+}
+
+.webhook-manager-list {
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.webhook-list-item {
+  border: 1px solid rgba(0, 168, 132, 0.12);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all .2s ease;
+  background: #fff;
+}
+
+.webhook-list-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(0, 168, 132, 0.12);
+}
+
+.webhook-list-item.active {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(0, 168, 132, 0.15);
+}
+
+.webhook-list-url {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.webhook-header-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
 .ui.modal > .actions {
   border-radius: 0 0 20px 20px !important;
   background-color: rgba(248, 248, 248, 0.8) !important;

@@ -60,15 +60,15 @@ func sendToGlobalWebHook(jsonData []byte, token string, userID string) {
 			"userID":       userID,
 			"instanceName": instance_name,
 		}
-		callHookWithHmac(*globalWebhook, globalData, userID, globalHMACKeyEncrypted)
+		callHookWithHmac(*globalWebhook, globalData, userID, globalHMACKeyEncrypted, nil)
 	}
 }
 
 func sendToUserWebHook(webhookurl string, path string, jsonData []byte, userID string, token string) {
-	sendToUserWebHookWithHmac(webhookurl, path, jsonData, userID, token, nil)
+	sendToUserWebHookWithHmac(webhookurl, path, jsonData, userID, token, nil, nil)
 }
 
-func sendToUserWebHookWithHmac(webhookurl string, path string, jsonData []byte, userID string, token string, encryptedHmacKey []byte) {
+func sendToUserWebHookWithHmac(webhookurl string, path string, jsonData []byte, userID string, token string, encryptedHmacKey []byte, opts *WebhookRequestOptions) {
 
 	instance_name := ""
 	userinfo, found := userinfocache.Get(token)
@@ -87,12 +87,12 @@ func sendToUserWebHookWithHmac(webhookurl string, path string, jsonData []byte, 
 		log.Info().Str("url", webhookurl).Msg("Calling user webhook")
 
 		if path == "" {
-			go callHookWithHmac(webhookurl, data, userID, encryptedHmacKey)
+			go callHookWithHmac(webhookurl, data, userID, encryptedHmacKey, opts)
 		} else {
 			// Create a channel to capture the error from the goroutine
 			errChan := make(chan error, 1)
 			go func() {
-				err := callHookFileWithHmac(webhookurl, data, userID, path, encryptedHmacKey)
+				err := callHookFileWithHmac(webhookurl, data, userID, path, encryptedHmacKey, opts)
 				errChan <- err
 			}()
 
@@ -152,8 +152,6 @@ func getUserWebhookUrl(token string) string {
 }
 
 func sendEventWithWebHook(mycli *MyClient, postmap map[string]interface{}, path string) {
-	webhookurl := getUserWebhookUrl(mycli.token)
-
 	// Get updated events from cache/database
 	subscribedEvents, err := updateAndGetUserSubscriptions(mycli)
 	if err != nil {
@@ -192,20 +190,34 @@ func sendEventWithWebHook(mycli *MyClient, postmap map[string]interface{}, path 
 		return
 	}
 
-	// Get HMAC key for this user
-	var encryptedHmacKey []byte
-	if userinfo, found := userinfocache.Get(mycli.token); found {
-		encryptedB64 := userinfo.(Values).Get("HmacKeyEncrypted")
-		if encryptedB64 != "" {
-			var err error
-			encryptedHmacKey, err = base64.StdEncoding.DecodeString(encryptedB64)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to decode HMAC key from cache")
-			}
-		}
+	webhookTargets, err := mycli.s.listDispatchWebhooks(mycli.userID, mycli.token)
+	if err != nil {
+		log.Error().Err(err).Str("userID", mycli.userID).Msg("Failed to list webhooks for dispatch")
+		return
 	}
 
-	sendToUserWebHookWithHmac(webhookurl, path, jsonData, mycli.userID, mycli.token, encryptedHmacKey)
+	dispatched := 0
+	for _, target := range webhookTargets {
+		if !target.Active || strings.TrimSpace(target.URL) == "" {
+			continue
+		}
+		if !checkIfSubscribedToEvent(target.Events, eventType, mycli.userID) {
+			continue
+		}
+
+		opts := &WebhookRequestOptions{
+			RetryPolicy:       target.RetryPolicy,
+			RetryDelaySeconds: target.RetryDelaySeconds,
+			RetryAttempts:     target.RetryAttempts,
+			CustomHeaders:     target.CustomHeaders,
+		}
+		sendToUserWebHookWithHmac(target.URL, path, jsonData, mycli.userID, mycli.token, target.EncryptedHmacKey, opts)
+		dispatched++
+	}
+
+	if dispatched == 0 {
+		log.Debug().Str("userID", mycli.userID).Str("eventType", eventType).Msg("No matching active webhooks to dispatch")
+	}
 
 	// Get global webhook if configured
 	go sendToGlobalWebHook(jsonData, mycli.token, mycli.userID)

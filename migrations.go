@@ -70,6 +70,11 @@ var migrations = []Migration{
 		Name:  "add_data_json",
 		UpSQL: addDataJsonSQL,
 	},
+	{
+		ID:    9,
+		Name:  "add_user_webhooks",
+		UpSQL: addUserWebhooksSQL,
+	},
 }
 
 const changeIDToStringSQL = `
@@ -209,6 +214,58 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'message_history' AND column_name = 'datajson') THEN
         ALTER TABLE message_history ADD COLUMN datajson TEXT;
     END IF;
+END $$;
+
+-- SQLite version (handled in code)
+`
+
+const addUserWebhooksSQL = `
+-- PostgreSQL version
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'user_webhooks') THEN
+        CREATE TABLE user_webhooks (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            url TEXT NOT NULL DEFAULT '',
+            events TEXT NOT NULL DEFAULT '',
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            hmac_key BYTEA,
+            retry_policy TEXT NOT NULL DEFAULT 'exponential',
+            retry_delay_seconds INTEGER NOT NULL DEFAULT 30,
+            retry_attempts INTEGER NOT NULL DEFAULT 5,
+            custom_headers TEXT NOT NULL DEFAULT '[]',
+            is_primary_legacy BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_user_webhooks_user_id ON user_webhooks(user_id);
+        CREATE INDEX IF NOT EXISTS idx_user_webhooks_active ON user_webhooks(active);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_user_webhooks_user_primary ON user_webhooks(user_id, is_primary_legacy) WHERE is_primary_legacy = TRUE;
+    END IF;
+
+    -- Backfill legacy webhook data into primary webhook rows (one per user)
+    INSERT INTO user_webhooks (
+        id, user_id, url, events, active, retry_policy, retry_delay_seconds, retry_attempts, custom_headers, is_primary_legacy, created_at, updated_at
+    )
+    SELECT
+        md5(u.id || '_legacy_webhook') AS id,
+        u.id AS user_id,
+        COALESCE(u.webhook, '') AS url,
+        COALESCE(u.events, '') AS events,
+        CASE WHEN COALESCE(u.webhook, '') <> '' THEN TRUE ELSE FALSE END AS active,
+        'exponential' AS retry_policy,
+        30 AS retry_delay_seconds,
+        5 AS retry_attempts,
+        '[]' AS custom_headers,
+        TRUE AS is_primary_legacy,
+        NOW() AS created_at,
+        NOW() AS updated_at
+    FROM users u
+    WHERE NOT EXISTS (
+        SELECT 1 FROM user_webhooks uw WHERE uw.user_id = u.id AND uw.is_primary_legacy = TRUE
+    );
 END $$;
 
 -- SQLite version (handled in code)
@@ -432,6 +489,81 @@ func applyMigration(db *sqlx.DB, migration Migration) error {
 		if db.DriverName() == "sqlite" {
 			// Add dataJson column to message_history table for SQLite
 			err = addColumnIfNotExistsSQLite(tx, "message_history", "datajson", "TEXT")
+		} else {
+			_, err = tx.Exec(migration.UpSQL)
+		}
+	} else if migration.ID == 9 {
+		if db.DriverName() == "sqlite" {
+			// Create table for multi-webhook support
+			err = createTableIfNotExistsSQLite(tx, "user_webhooks", `
+				CREATE TABLE user_webhooks (
+					id TEXT PRIMARY KEY,
+					user_id TEXT NOT NULL,
+					url TEXT NOT NULL DEFAULT '',
+					events TEXT NOT NULL DEFAULT '',
+					active INTEGER NOT NULL DEFAULT 1,
+					hmac_key BLOB,
+					retry_policy TEXT NOT NULL DEFAULT 'exponential',
+					retry_delay_seconds INTEGER NOT NULL DEFAULT 30,
+					retry_attempts INTEGER NOT NULL DEFAULT 5,
+					custom_headers TEXT NOT NULL DEFAULT '[]',
+					is_primary_legacy INTEGER NOT NULL DEFAULT 0,
+					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+					updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+				)`)
+			if err == nil {
+				_, err = tx.Exec(`CREATE INDEX IF NOT EXISTS idx_user_webhooks_user_id ON user_webhooks(user_id)`)
+			}
+			if err == nil {
+				_, err = tx.Exec(`CREATE INDEX IF NOT EXISTS idx_user_webhooks_active ON user_webhooks(active)`)
+			}
+			if err == nil {
+				_, err = tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_webhooks_user_primary ON user_webhooks(user_id, is_primary_legacy) WHERE is_primary_legacy = 1`)
+			}
+
+			if err == nil {
+				// Backfill existing users into primary legacy webhooks
+				rows, qErr := tx.Queryx(`SELECT id, COALESCE(webhook, ''), COALESCE(events, '') FROM users`)
+				if qErr != nil {
+					err = qErr
+				} else {
+					defer rows.Close()
+					for rows.Next() {
+						var userID, webhook, events string
+						if scanErr := rows.Scan(&userID, &webhook, &events); scanErr != nil {
+							err = scanErr
+							break
+						}
+
+						var exists int
+						if getErr := tx.Get(&exists, `SELECT COUNT(*) FROM user_webhooks WHERE user_id = ? AND is_primary_legacy = 1`, userID); getErr != nil {
+							err = getErr
+							break
+						}
+						if exists > 0 {
+							continue
+						}
+
+						hookID := fmt.Sprintf("%s_legacy_webhook", userID)
+						active := 0
+						if strings.TrimSpace(webhook) != "" {
+							active = 1
+						}
+
+						if _, insErr := tx.Exec(`
+							INSERT INTO user_webhooks
+							(id, user_id, url, events, active, retry_policy, retry_delay_seconds, retry_attempts, custom_headers, is_primary_legacy, created_at, updated_at)
+							VALUES (?, ?, ?, ?, ?, 'exponential', 30, 5, '[]', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+						`, hookID, userID, webhook, events, active); insErr != nil {
+							err = insErr
+							break
+						}
+					}
+					if rowErr := rows.Err(); rowErr != nil && err == nil {
+						err = rowErr
+					}
+				}
+			}
 		} else {
 			_, err = tx.Exec(migration.UpSQL)
 		}

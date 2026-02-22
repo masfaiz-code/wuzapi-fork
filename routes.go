@@ -91,6 +91,11 @@ func (s *server) routes() {
 	s.router.Handle("/webhook", c.Then(s.DeleteWebhook())).Methods("DELETE")
 	s.router.Handle("/webhook", c.Then(s.UpdateWebhook())).Methods("PUT")
 
+	s.router.Handle("/webhooks", c.Then(s.ListWebhooks())).Methods("GET")
+	s.router.Handle("/webhooks", c.Then(s.CreateWebhook())).Methods("POST")
+	s.router.Handle("/webhooks/{id}", c.Then(s.UpdateWebhookByID())).Methods("PUT")
+	s.router.Handle("/webhooks/{id}", c.Then(s.DeleteWebhookByID())).Methods("DELETE")
+
 	s.router.Handle("/session/proxy", c.Then(s.SetProxy())).Methods("POST")
 	s.router.Handle("/session/history", c.Then(s.SetHistory())).Methods("POST")
 

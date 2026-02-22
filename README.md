@@ -257,6 +257,7 @@ The JSON body for creating a new user must contain:
 - `token` [string] : Security token to authorize/authenticate this user
 - `webhook` [string] : URL to send events via POST (optional)
 - `events` [string] : Comma-separated list of events to receive (required) - Valid events are: "Message", "ReadReceipt", "Presence", "HistorySync", "ChatPresence", "All"
+- `webhooks` [array] : Optional WAHA-style multi-webhook destinations (advanced)
 - `expiration` [int] : Expiration timestamp (optional, not enforced by the system)
 
 ## User Creation with Optional Proxy and S3 Configuration
@@ -304,6 +305,27 @@ You can create a user with optional proxy and S3 storage configuration. All fiel
   - `retentionDays` (integer): Number of days to retain files.
 
 If you omit `proxyConfig` or `s3Config`, the user will be created without proxy or S3 integration, maintaining full backward compatibility.
+
+## Multi Webhooks (WAHA-style compatible)
+
+WuzAPI now supports **multiple webhooks per user**.
+
+- Legacy endpoint `/webhook` remains available and manages the **primary webhook** (for backward compatibility and older dashboard/API clients).
+- New endpoint `/webhooks` manages **additional webhook items** (WAHA-style behavior).
+- Events are dispatched to **all active webhook destinations** that subscribe to the event type.
+
+Supported per-webhook options:
+
+- `url`
+- `events[]`
+- `active`
+- `hmac.key` (optional, per webhook)
+- `retries.policy` (`exponential`, `linear`, `constant`)
+- `retries.delaySeconds`
+- `retries.attempts`
+- `customHeaders[]`
+
+The built-in dashboard (`/dashboard`) now includes a webhook manager UI to add/edit/delete multiple webhooks per instance.
 
 ## API reference 
 

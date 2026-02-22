@@ -86,6 +86,69 @@ type WebhookErrorPayload struct {
 	AttemptTime      time.Time              `json:"attemptTime"`
 	ErrorMessage     string                 `json:"errorMessage"`
 }
+
+type WebhookRequestOptions struct {
+	RetryPolicy       string
+	RetryDelaySeconds int
+	RetryAttempts     int
+	CustomHeaders     map[string]string
+}
+
+func normalizeWebhookRequestOptions(opts *WebhookRequestOptions) WebhookRequestOptions {
+	resolved := WebhookRequestOptions{
+		RetryPolicy:       webhookRetryPolicyExponential,
+		RetryDelaySeconds: *webhookRetryDelaySeconds,
+		RetryAttempts:     1,
+		CustomHeaders:     map[string]string{},
+	}
+
+	if *webhookRetryEnabled {
+		resolved.RetryAttempts = *webhookRetryCount
+	}
+
+	if opts == nil {
+		return resolved
+	}
+
+	if policy := normalizeRetryPolicy(opts.RetryPolicy); policy != "" {
+		resolved.RetryPolicy = policy
+	}
+	if opts.RetryDelaySeconds > 0 {
+		resolved.RetryDelaySeconds = opts.RetryDelaySeconds
+	}
+	if opts.RetryAttempts > 0 {
+		resolved.RetryAttempts = opts.RetryAttempts
+	}
+	if len(opts.CustomHeaders) > 0 {
+		resolved.CustomHeaders = opts.CustomHeaders
+	}
+
+	if resolved.RetryAttempts < 1 {
+		resolved.RetryAttempts = 1
+	}
+
+	return resolved
+}
+
+func computeWebhookRetryDelay(policy string, baseDelaySeconds int, attempt int) time.Duration {
+	if baseDelaySeconds <= 0 {
+		baseDelaySeconds = 1
+	}
+	if attempt <= 0 {
+		attempt = 1
+	}
+
+	switch normalizeRetryPolicy(policy) {
+	case webhookRetryPolicyConstant:
+		return time.Duration(baseDelaySeconds) * time.Second
+	case webhookRetryPolicyLinear:
+		return time.Duration(baseDelaySeconds*attempt) * time.Second
+	default:
+		multiplier := 1 << uint(attempt-1)
+		return time.Duration(baseDelaySeconds*multiplier) * time.Second
+	}
+}
+
 type openGraphResult struct {
 	Title       string
 	Description string
@@ -236,20 +299,18 @@ func updateUserInfo(values interface{}, field string, value string) interface{} 
 
 // webhook for regular messages
 func callHook(myurl string, payload map[string]string, userID string) {
-	callHookWithHmac(myurl, payload, userID, nil)
+	callHookWithHmac(myurl, payload, userID, nil, nil)
 }
 
 // webhook for regular messages with HMAC
-func callHookWithHmac(myurl string, payload map[string]string, userID string, encryptedHmacKey []byte) {
+func callHookWithHmac(myurl string, payload map[string]string, userID string, encryptedHmacKey []byte, opts *WebhookRequestOptions) {
 	log.Info().Str("url", myurl).Str("userID", userID).Msg("Sending POST to client with retry logic")
 
 	client := clientManager.GetHTTPClient(userID)
+	requestOpts := normalizeWebhookRequestOptions(opts)
 
 	// Retry settings
-	maxRetries := 1
-	if *webhookRetryEnabled {
-		maxRetries = *webhookRetryCount
-	}
+	maxRetries := requestOpts.RetryAttempts
 
 	var lastError error
 
@@ -258,16 +319,14 @@ func callHookWithHmac(myurl string, payload map[string]string, userID string, en
 	// Starts the retry loop.
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			backoffFactor := 1 << uint(attempt-1)
-
-			// Calculate the final delay.
-			delayDuration := time.Duration(*webhookRetryDelaySeconds) * time.Second * time.Duration(backoffFactor)
+			delayDuration := computeWebhookRetryDelay(requestOpts.RetryPolicy, requestOpts.RetryDelaySeconds, attempt)
 
 			log.Warn().
 				Int("attempt", attempt+1).
 				Str("url", myurl).
 				Dur("delay", delayDuration).
-				Msg("Retrying webhook request with exponential backoff...")
+				Str("policy", requestOpts.RetryPolicy).
+				Msg("Retrying webhook request...")
 
 			time.Sleep(delayDuration)
 		}
@@ -332,6 +391,13 @@ func callHookWithHmac(myurl string, payload map[string]string, userID string, en
 			req.SetHeader("x-hmac-signature", hmacSignature)
 		}
 
+		for headerName, headerValue := range requestOpts.CustomHeaders {
+			if strings.TrimSpace(headerName) == "" {
+				continue
+			}
+			req.SetHeader(strings.TrimSpace(headerName), headerValue)
+		}
+
 		resp, postErr := req.Post(myurl)
 
 		lastError = postErr
@@ -388,19 +454,17 @@ func callHookWithHmac(myurl string, payload map[string]string, userID string, en
 
 // webhook for messages with file attachments
 func callHookFile(myurl string, payload map[string]string, userID string, file string) error {
-	return callHookFileWithHmac(myurl, payload, userID, file, nil)
+	return callHookFileWithHmac(myurl, payload, userID, file, nil, nil)
 }
 
 // webhook for messages with file attachments and HMAC
-func callHookFileWithHmac(myurl string, payload map[string]string, userID string, file string, encryptedHmacKey []byte) error {
+func callHookFileWithHmac(myurl string, payload map[string]string, userID string, file string, encryptedHmacKey []byte, opts *WebhookRequestOptions) error {
 	log.Info().Str("file", file).Str("url", myurl).Msg("Sending POST with retry logic")
 
 	client := clientManager.GetHTTPClient(userID)
+	requestOpts := normalizeWebhookRequestOptions(opts)
 
-	maxRetries := 1
-	if *webhookRetryEnabled {
-		maxRetries = *webhookRetryCount
-	}
+	maxRetries := requestOpts.RetryAttempts
 
 	var lastError error
 
@@ -413,15 +477,14 @@ func callHookFileWithHmac(myurl string, payload map[string]string, userID string
 	// 2. Loop Retry
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			backoffFactor := 1 << uint(attempt-1)
-
-			delayDuration := time.Duration(*webhookRetryDelaySeconds) * time.Second * time.Duration(backoffFactor)
+			delayDuration := computeWebhookRetryDelay(requestOpts.RetryPolicy, requestOpts.RetryDelaySeconds, attempt)
 
 			log.Warn().
 				Int("attempt", attempt+1).
 				Str("url", myurl).
 				Dur("delay", delayDuration).
-				Msg("Retrying file webhook request with exponential backoff...")
+				Str("policy", requestOpts.RetryPolicy).
+				Msg("Retrying file webhook request...")
 
 			time.Sleep(delayDuration)
 		}
@@ -450,6 +513,13 @@ func callHookFileWithHmac(myurl string, payload map[string]string, userID string
 
 		if hmacSignature != "" {
 			req.SetHeader("x-hmac-signature", hmacSignature)
+		}
+
+		for headerName, headerValue := range requestOpts.CustomHeaders {
+			if strings.TrimSpace(headerName) == "" {
+				continue
+			}
+			req.SetHeader(strings.TrimSpace(headerName), headerValue)
 		}
 
 		resp, postErr := req.Post(myurl)

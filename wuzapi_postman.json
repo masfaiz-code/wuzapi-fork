@@ -607,6 +607,103 @@
       ]
     },
     {
+      "name": "Webhooks (Multi)",
+      "item": [
+        {
+          "name": "List Webhooks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "token",
+                "value": "{{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks"]
+            },
+            "description": "List all configured webhook destinations"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Webhook Item",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.net/orders\",\n  \"events\": [\"Message\", \"Receipt\"],\n  \"active\": true,\n  \"retries\": {\n    \"policy\": \"linear\",\n    \"delaySeconds\": 10,\n    \"attempts\": 3\n  },\n  \"customHeaders\": [\n    {\"name\": \"x-app\", \"value\": \"orders\"}\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks"]
+            },
+            "description": "Create additional webhook destination"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Webhook Item",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"active\": true,\n  \"events\": [\"All\"],\n  \"retries\": {\n    \"policy\": \"constant\",\n    \"delaySeconds\": 5,\n    \"attempts\": 5\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/{{webhookId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "{{webhookId}}"]
+            },
+            "description": "Update one webhook destination by id"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Webhook Item",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "token",
+                "value": "{{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/{{webhookId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "{{webhookId}}"]
+            },
+            "description": "Delete one non-primary webhook destination by id"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Chat",
       "item": [
         {

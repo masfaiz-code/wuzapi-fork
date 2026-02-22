@@ -349,33 +349,15 @@ func (s *server) Disconnect() http.HandlerFunc {
 // Gets WebHook
 func (s *server) GetWebhook() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-
-		webhook := ""
-		events := ""
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
 
-		rows, err := s.db.Query("SELECT webhook,events FROM users WHERE id=$1 LIMIT 1", txtid)
+		hook, err := s.ensurePrimaryLegacyWebhook(txtid)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not get webhook: %v", err)))
 			return
 		}
-		defer rows.Close()
-		for rows.Next() {
-			err = rows.Scan(&webhook, &events)
-			if err != nil {
-				s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not get webhook: %s", fmt.Sprintf("%s", err))))
-				return
-			}
-		}
-		err = rows.Err()
-		if err != nil {
-			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not get webhook: %s", fmt.Sprintf("%s", err))))
-			return
-		}
 
-		eventarray := strings.Split(events, ",")
-
-		response := map[string]interface{}{"webhook": webhook, "subscribe": eventarray}
+		response := map[string]interface{}{"webhook": hook.URL, "subscribe": splitEventsCSV(hook.Events)}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, err)
@@ -392,17 +374,27 @@ func (s *server) DeleteWebhook() http.HandlerFunc {
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
 		token := r.Context().Value("userinfo").(Values).Get("Token")
 
-		// Update the database to remove the webhook and clear events
-		_, err := s.db.Exec("UPDATE users SET webhook='', events='' WHERE id=$1", txtid)
+		hook, err := s.ensurePrimaryLegacyWebhook(txtid)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not delete webhook: %v", err)))
 			return
 		}
 
-		// Update the user info cache
-		v := updateUserInfo(r.Context().Value("userinfo"), "Webhook", "")
-		v = updateUserInfo(v, "Events", "")
-		userinfocache.Set(token, v, cache.NoExpiration)
+		nowExpr := dbNowExpression(s.db.DriverName())
+		query := "UPDATE user_webhooks SET url=$1, events=$2, active=$3, custom_headers=$4, updated_at=" + nowExpr + " WHERE id=$5 AND user_id=$6"
+		if s.db.DriverName() == "sqlite" {
+			for i := 1; i <= 6; i++ {
+				query = strings.ReplaceAll(query, "$"+strconv.Itoa(i), "?")
+			}
+		}
+
+		_, err = s.db.Exec(query, "", "", dbBoolValue(false, s.db.DriverName()), "[]", hook.ID, txtid)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not delete webhook: %v", err)))
+			return
+		}
+
+		s.refreshUserWebhookCacheAndSubscriptions(txtid, token)
 
 		response := map[string]interface{}{"Details": "Webhook and events deleted successfully"}
 		responseJson, err := json.Marshal(response)
@@ -433,50 +425,21 @@ func (s *server) UpdateWebhook() http.HandlerFunc {
 			return
 		}
 
-		webhook := t.WebhookURL
-
-		var eventstring string
-		var validEvents []string
-		for _, event := range t.Events {
-			if !Find(supportedEventTypes, event) {
-				log.Warn().Str("Type", event).Msg("Event type discarded")
-				continue
-			}
-			validEvents = append(validEvents, event)
-		}
-		eventstring = strings.Join(validEvents, ",")
-		if eventstring == "," || eventstring == "" {
-			eventstring = ""
+		payload := WebhookPayload{
+			URL:    t.WebhookURL,
+			Events: t.Events,
+			Active: &t.Active,
 		}
 
-		if !t.Active {
-			webhook = ""
-			eventstring = ""
-		}
-
-		if len(t.Events) > 0 {
-			_, err = s.db.Exec("UPDATE users SET webhook=$1, events=$2 WHERE id=$3", webhook, eventstring, txtid)
-
-			// Update MyClient if connected - integrated UpdateEvents functionality
-			if len(validEvents) > 0 {
-				clientManager.UpdateMyClientSubscriptions(txtid, validEvents)
-				log.Info().Strs("events", validEvents).Str("user", txtid).Msg("Updated event subscriptions")
-			}
-		} else {
-			// Update only webhook
-			_, err = s.db.Exec("UPDATE users SET webhook=$1 WHERE id=$2", webhook, txtid)
-		}
-
+		hook, err := s.upsertPrimaryLegacyWebhook(txtid, payload)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not update webhook: %v", err)))
 			return
 		}
 
-		v := updateUserInfo(r.Context().Value("userinfo"), "Webhook", webhook)
-		v = updateUserInfo(v, "Events", eventstring)
-		userinfocache.Set(token, v, cache.NoExpiration)
+		s.refreshUserWebhookCacheAndSubscriptions(txtid, token)
 
-		response := map[string]interface{}{"webhook": webhook, "events": validEvents, "active": t.Active}
+		response := map[string]interface{}{"webhook": hook.URL, "events": splitEventsCSV(hook.Events), "active": hook.Active}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, err)
@@ -504,53 +467,187 @@ func (s *server) SetWebhook() http.HandlerFunc {
 			return
 		}
 
-		webhook := t.WebhookURL
-
-		// If events are provided, validate them
-		var eventstring string
-		if len(t.Events) > 0 {
-			var validEvents []string
-			for _, event := range t.Events {
-				if !Find(supportedEventTypes, event) {
-					log.Warn().Str("Type", event).Msg("Event type discarded")
-					continue
-				}
-				validEvents = append(validEvents, event)
-			}
-			eventstring = strings.Join(validEvents, ",")
-			if eventstring == "," || eventstring == "" {
-				eventstring = ""
-			}
-
-			// Update both webhook and events
-			_, err = s.db.Exec("UPDATE users SET webhook=$1, events=$2 WHERE id=$3", webhook, eventstring, txtid)
-
-			// Update MyClient if connected - integrated UpdateEvents functionality
-			if len(validEvents) > 0 {
-				clientManager.UpdateMyClientSubscriptions(txtid, validEvents)
-				log.Info().Strs("events", validEvents).Str("user", txtid).Msg("Updated event subscriptions")
-			}
-		} else {
-			// Update only webhook
-			_, err = s.db.Exec("UPDATE users SET webhook=$1 WHERE id=$2", webhook, txtid)
+		active := strings.TrimSpace(t.WebhookURL) != ""
+		payload := WebhookPayload{
+			URL:    t.WebhookURL,
+			Events: t.Events,
+			Active: &active,
 		}
 
+		hook, err := s.upsertPrimaryLegacyWebhook(txtid, payload)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not set webhook: %v", err)))
 			return
 		}
 
-		v := updateUserInfo(r.Context().Value("userinfo"), "Webhook", webhook)
-		v = updateUserInfo(v, "Events", eventstring)
-		userinfocache.Set(token, v, cache.NoExpiration)
+		s.refreshUserWebhookCacheAndSubscriptions(txtid, token)
 
-		response := map[string]interface{}{"webhook": webhook}
+		response := map[string]interface{}{"webhook": hook.URL}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, err)
 		} else {
 			s.Respond(w, r, http.StatusOK, string(responseJson))
 		}
+	}
+}
+
+// ListWebhooks returns WAHA-style multi-webhook config for the user
+func (s *server) ListWebhooks() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		if _, err := s.ensurePrimaryLegacyWebhook(txtid); err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not ensure legacy webhook: %v", err)))
+			return
+		}
+
+		items, err := s.getUserWebhooks(txtid)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not list webhooks: %v", err)))
+			return
+		}
+
+		resp := make([]WebhookResponse, 0, len(items))
+		for _, item := range items {
+			resp = append(resp, userWebhookToResponse(item))
+		}
+
+		response := map[string]interface{}{"webhooks": resp}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+			return
+		}
+
+		s.Respond(w, r, http.StatusOK, string(responseJson))
+	}
+}
+
+// CreateWebhook creates a new non-primary webhook for user
+func (s *server) CreateWebhook() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		token := r.Context().Value("userinfo").(Values).Get("Token")
+
+		var payload WebhookPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode payload"))
+			return
+		}
+
+		if _, err := s.ensurePrimaryLegacyWebhook(txtid); err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not ensure legacy webhook: %v", err)))
+			return
+		}
+
+		hook, err := s.createWebhook(txtid, payload)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, err)
+			return
+		}
+
+		s.refreshUserWebhookCacheAndSubscriptions(txtid, token)
+
+		response := map[string]interface{}{"webhook": userWebhookToResponse(*hook)}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+			return
+		}
+
+		s.Respond(w, r, http.StatusCreated, string(responseJson))
+	}
+}
+
+// UpdateWebhookByID updates one webhook for user
+func (s *server) UpdateWebhookByID() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		token := r.Context().Value("userinfo").(Values).Get("Token")
+		vars := mux.Vars(r)
+		webhookID := vars["id"]
+
+		if strings.TrimSpace(webhookID) == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing webhook id"))
+			return
+		}
+
+		var payload WebhookPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode payload"))
+			return
+		}
+
+		hook, err := s.updateWebhook(txtid, webhookID, payload)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				s.Respond(w, r, http.StatusNotFound, errors.New("webhook not found"))
+				return
+			}
+			s.Respond(w, r, http.StatusBadRequest, err)
+			return
+		}
+
+		s.refreshUserWebhookCacheAndSubscriptions(txtid, token)
+
+		response := map[string]interface{}{"webhook": userWebhookToResponse(*hook)}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+			return
+		}
+
+		s.Respond(w, r, http.StatusOK, string(responseJson))
+	}
+}
+
+// DeleteWebhookByID deletes one non-primary webhook by id
+func (s *server) DeleteWebhookByID() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		token := r.Context().Value("userinfo").(Values).Get("Token")
+		vars := mux.Vars(r)
+		webhookID := vars["id"]
+
+		if strings.TrimSpace(webhookID) == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing webhook id"))
+			return
+		}
+
+		hook, err := s.getWebhookByID(txtid, webhookID)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				s.Respond(w, r, http.StatusNotFound, errors.New("webhook not found"))
+				return
+			}
+			s.Respond(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if hook.IsPrimaryLegacy {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("cannot delete primary legacy webhook from /webhooks/{id}; use DELETE /webhook"))
+			return
+		}
+
+		if err := s.deleteWebhookByID(txtid, webhookID); err != nil {
+			if err == sql.ErrNoRows {
+				s.Respond(w, r, http.StatusNotFound, errors.New("webhook not found"))
+				return
+			}
+			s.Respond(w, r, http.StatusInternalServerError, err)
+			return
+		}
+
+		s.refreshUserWebhookCacheAndSubscriptions(txtid, token)
+
+		response := map[string]interface{}{"Details": "Webhook deleted successfully"}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+			return
+		}
+
+		s.Respond(w, r, http.StatusOK, string(responseJson))
 	}
 }
 
@@ -810,13 +907,13 @@ func (s *server) GetStatus() http.HandlerFunc {
 func (s *server) SendDocument() http.HandlerFunc {
 
 	type documentStruct struct {
-		Caption     string
-		Phone       string
-		Document    string
-		FileName    string
-		Id          string
-		MimeType    string
-		ContextInfo waE2E.ContextInfo
+		Caption       string
+		Phone         string
+		Document      string
+		FileName      string
+		Id            string
+		MimeType      string
+		ContextInfo   waE2E.ContextInfo
 		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 
@@ -965,15 +1062,15 @@ func (s *server) SendDocument() http.HandlerFunc {
 func (s *server) SendAudio() http.HandlerFunc {
 
 	type audioStruct struct {
-		Phone       string
-		Audio       string
-		Caption     string
-		Id          string
-		PTT         *bool  `json:"ptt,omitempty"`
-		MimeType    string `json:"mimetype,omitempty"`
-		Seconds     uint32
-		Waveform    []byte
-		ContextInfo waE2E.ContextInfo
+		Phone         string
+		Audio         string
+		Caption       string
+		Id            string
+		PTT           *bool  `json:"ptt,omitempty"`
+		MimeType      string `json:"mimetype,omitempty"`
+		Seconds       uint32
+		Waveform      []byte
+		ContextInfo   waE2E.ContextInfo
 		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 
@@ -1647,11 +1744,11 @@ func (s *server) SendVideo() http.HandlerFunc {
 func (s *server) SendContact() http.HandlerFunc {
 
 	type contactStruct struct {
-		Phone       string
-		Id          string
-		Name        string
-		Vcard       string
-		ContextInfo waE2E.ContextInfo
+		Phone         string
+		Id            string
+		Name          string
+		Vcard         string
+		ContextInfo   waE2E.ContextInfo
 		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 
@@ -1764,12 +1861,12 @@ func (s *server) SendContact() http.HandlerFunc {
 func (s *server) SendLocation() http.HandlerFunc {
 
 	type locationStruct struct {
-		Phone       string
-		Id          string
-		Name        string
-		Latitude    float64
-		Longitude   float64
-		ContextInfo waE2E.ContextInfo
+		Phone         string
+		Id            string
+		Name          string
+		Latitude      float64
+		Longitude     float64
+		ContextInfo   waE2E.ContextInfo
 		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 
@@ -2195,8 +2292,8 @@ func (s *server) SendMessage() http.HandlerFunc {
 		LinkPreview   bool
 		Id            string
 		ContextInfo   waE2E.ContextInfo
-		QuotedText    string          `json:"QuotedText,omitempty"`
-		QuotedMessage *waE2E.Message  `json:"QuotedMessage,omitempty"`
+		QuotedText    string         `json:"QuotedText,omitempty"`
+		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
@@ -4749,15 +4846,16 @@ func (s *server) AddUser() http.HandlerFunc {
 
 		// Parse the request body
 		var user struct {
-			Name        string       `json:"name"`
-			Token       string       `json:"token"`
-			Webhook     string       `json:"webhook,omitempty"`
-			Expiration  int          `json:"expiration,omitempty"`
-			Events      string       `json:"events,omitempty"`
-			ProxyConfig *ProxyConfig `json:"proxyConfig,omitempty"`
-			S3Config    *S3Config    `json:"s3Config,omitempty"`
-			HmacKey     string       `json:"hmacKey,omitempty"`
-			History     int          `json:"history,omitempty"`
+			Name        string           `json:"name"`
+			Token       string           `json:"token"`
+			Webhook     string           `json:"webhook,omitempty"`
+			Expiration  int              `json:"expiration,omitempty"`
+			Events      string           `json:"events,omitempty"`
+			Webhooks    []WebhookPayload `json:"webhooks,omitempty"`
+			ProxyConfig *ProxyConfig     `json:"proxyConfig,omitempty"`
+			S3Config    *S3Config        `json:"s3Config,omitempty"`
+			HmacKey     string           `json:"hmacKey,omitempty"`
+			History     int              `json:"history,omitempty"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
@@ -4785,6 +4883,47 @@ func (s *server) AddUser() http.HandlerFunc {
 		}
 		if user.Webhook == "" {
 			user.Webhook = ""
+		}
+
+		if len(user.Webhooks) > 0 {
+			for _, wh := range user.Webhooks {
+				if strings.TrimSpace(wh.URL) == "" {
+					s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+						"code":    http.StatusBadRequest,
+						"error":   "invalid webhook payload",
+						"success": false,
+						"details": "webhooks[].url is required",
+					})
+					return
+				}
+				if _, err := normalizeAndValidateEvents(wh.Events); err != nil {
+					s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+						"code":    http.StatusBadRequest,
+						"error":   "invalid webhook payload",
+						"success": false,
+						"details": err.Error(),
+					})
+					return
+				}
+				if _, err := validateRetriesPayload(wh.Retries); err != nil {
+					s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+						"code":    http.StatusBadRequest,
+						"error":   "invalid webhook payload",
+						"success": false,
+						"details": err.Error(),
+					})
+					return
+				}
+				if wh.Hmac != nil && strings.TrimSpace(wh.Hmac.Key) != "" && len(strings.TrimSpace(wh.Hmac.Key)) < 32 {
+					s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+						"code":    http.StatusBadRequest,
+						"error":   "invalid webhook payload",
+						"success": false,
+						"details": "webhooks[].hmac.key must be at least 32 characters long",
+					})
+					return
+				}
+			}
 		}
 
 		// Encrypt HMAC key if provided
@@ -4877,6 +5016,36 @@ func (s *server) AddUser() http.HandlerFunc {
 			return
 		}
 
+		if _, err := s.ensurePrimaryLegacyWebhook(id); err != nil {
+			log.Error().Err(err).Str("user", id).Msg("Failed to create primary legacy webhook")
+		} else {
+			active := strings.TrimSpace(user.Webhook) != ""
+			payload := WebhookPayload{
+				URL:    user.Webhook,
+				Events: splitEventsCSV(user.Events),
+				Active: &active,
+			}
+			if _, upErr := s.upsertPrimaryLegacyWebhook(id, payload); upErr != nil {
+				log.Error().Err(upErr).Str("user", id).Msg("Failed to sync primary legacy webhook from create payload")
+			}
+		}
+
+		if len(user.Webhooks) > 0 {
+			for _, wh := range user.Webhooks {
+				payload := WebhookPayload{
+					URL:           wh.URL,
+					Events:        wh.Events,
+					Active:        wh.Active,
+					Hmac:          wh.Hmac,
+					Retries:       wh.Retries,
+					CustomHeaders: wh.CustomHeaders,
+				}
+				if _, err := s.createWebhook(id, payload); err != nil {
+					log.Error().Err(err).Str("user", id).Str("url", wh.URL).Msg("Failed to create webhook from admin payload")
+				}
+			}
+		}
+
 		// Initialize S3Manager if necessary
 		if user.S3Config != nil && user.S3Config.Enabled {
 			s3Config := &S3Config{
@@ -4945,14 +5114,15 @@ func (s *server) EditUser() http.HandlerFunc {
 
 		// Parse the request body
 		var user struct {
-			Name        string       `json:"name,omitempty"`
-			Token       string       `json:"token,omitempty"`
-			Webhook     string       `json:"webhook,omitempty"`
-			Expiration  int          `json:"expiration,omitempty"`
-			Events      string       `json:"events,omitempty"`
-			ProxyConfig *ProxyConfig `json:"proxyConfig,omitempty"`
-			S3Config    *S3Config    `json:"s3Config,omitempty"`
-			History     int          `json:"history,omitempty"`
+			Name        string           `json:"name,omitempty"`
+			Token       string           `json:"token,omitempty"`
+			Webhook     string           `json:"webhook,omitempty"`
+			Expiration  int              `json:"expiration,omitempty"`
+			Events      string           `json:"events,omitempty"`
+			Webhooks    []WebhookPayload `json:"webhooks,omitempty"`
+			ProxyConfig *ProxyConfig     `json:"proxyConfig,omitempty"`
+			S3Config    *S3Config        `json:"s3Config,omitempty"`
+			History     int              `json:"history,omitempty"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
@@ -5001,6 +5171,47 @@ func (s *server) EditUser() http.HandlerFunc {
 						"error":   "invalid event type",
 						"success": false,
 						"details": "invalid event: " + event,
+					})
+					return
+				}
+			}
+		}
+
+		if len(user.Webhooks) > 0 {
+			for _, wh := range user.Webhooks {
+				if strings.TrimSpace(wh.URL) == "" {
+					s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+						"code":    http.StatusBadRequest,
+						"error":   "invalid webhook payload",
+						"success": false,
+						"details": "webhooks[].url is required",
+					})
+					return
+				}
+				if _, err := normalizeAndValidateEvents(wh.Events); err != nil {
+					s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+						"code":    http.StatusBadRequest,
+						"error":   "invalid webhook payload",
+						"success": false,
+						"details": err.Error(),
+					})
+					return
+				}
+				if _, err := validateRetriesPayload(wh.Retries); err != nil {
+					s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+						"code":    http.StatusBadRequest,
+						"error":   "invalid webhook payload",
+						"success": false,
+						"details": err.Error(),
+					})
+					return
+				}
+				if wh.Hmac != nil && strings.TrimSpace(wh.Hmac.Key) != "" && len(strings.TrimSpace(wh.Hmac.Key)) < 32 {
+					s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+						"code":    http.StatusBadRequest,
+						"error":   "invalid webhook payload",
+						"success": false,
+						"details": "webhooks[].hmac.key must be at least 32 characters long",
 					})
 					return
 				}
@@ -5145,6 +5356,56 @@ func (s *server) EditUser() http.HandlerFunc {
 				userinfocache.Set(currentToken, updatedUserInfo, cache.NoExpiration)
 				log.Info().Str("userID", userID).Msg("User info cache updated after edit")
 			}
+		}
+
+		if user.Webhook != "" || user.Events != "" || len(user.Webhooks) > 0 {
+			primaryHook, pErr := s.ensurePrimaryLegacyWebhook(userID)
+			if pErr != nil {
+				log.Warn().Err(pErr).Str("userID", userID).Msg("Failed to ensure primary legacy webhook on edit")
+			} else {
+				urlValue := primaryHook.URL
+				if user.Webhook != "" {
+					urlValue = user.Webhook
+				}
+
+				eventValues := splitEventsCSV(primaryHook.Events)
+				if user.Events != "" {
+					eventValues = splitEventsCSV(user.Events)
+				}
+
+				active := strings.TrimSpace(urlValue) != ""
+				payload := WebhookPayload{
+					URL:    urlValue,
+					Events: eventValues,
+					Active: &active,
+				}
+				if _, upErr := s.upsertPrimaryLegacyWebhook(userID, payload); upErr != nil {
+					log.Warn().Err(upErr).Str("userID", userID).Msg("Failed to sync primary legacy webhook on edit")
+				}
+			}
+		}
+
+		if len(user.Webhooks) > 0 {
+			delQuery := "DELETE FROM user_webhooks WHERE user_id = $1 AND is_primary_legacy = false"
+			if s.db.DriverName() == "sqlite" {
+				delQuery = strings.ReplaceAll(delQuery, "$1", "?")
+			}
+			if _, delErr := s.db.Exec(delQuery, userID); delErr != nil {
+				log.Warn().Err(delErr).Str("userID", userID).Msg("Failed deleting non-primary webhooks on edit")
+			} else {
+				for _, wh := range user.Webhooks {
+					if _, cErr := s.createWebhook(userID, wh); cErr != nil {
+						log.Warn().Err(cErr).Str("userID", userID).Str("url", wh.URL).Msg("Failed creating webhook from edit payload")
+					}
+				}
+			}
+		}
+
+		if currentToken == "" {
+			_ = s.db.Get(&currentToken, "SELECT token FROM users WHERE id = $1", userID)
+		}
+		if currentToken != "" {
+			s.refreshUserWebhookCacheAndSubscriptions(userID, currentToken)
 		}
 
 		s.respondWithJSON(w, http.StatusOK, map[string]interface{}{

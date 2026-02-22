@@ -315,13 +315,38 @@
 
   <!-- Webhook Modals -->
 
-  <div class="ui modal" id="modalSetWebhook"><i class="close icon"></i>
-    <div class="header"> Webhook </div>
+  <div class="ui large modal" id="modalSetWebhook"><i class="close icon"></i>
+    <div class="header">Webhook Manager</div>
     <div class="content">
-      <div class="ui form">
-        <div class="field">
-          <label>Webhook Events</label>
-          <select id="webhookEvents" class="ui fluid dropdown" multiple="">
+      <div class="ui stackable two column grid webhook-manager-grid">
+        <div class="column">
+          <div class="ui segment webhook-manager-list-segment">
+            <div class="ui clearing basic segment" style="padding:0 0 .75rem 0;">
+              <h4 class="ui left floated header" style="margin:0;">Configured Webhooks</h4>
+              <button class="ui right floated tiny primary button" id="addWebhookBtn"><i class="plus icon"></i>Add</button>
+            </div>
+            <div id="webhookList" class="ui relaxed divided list webhook-manager-list"></div>
+          </div>
+        </div>
+        <div class="column">
+          <div class="ui segment webhook-editor-segment">
+            <div class="ui mini info message" id="webhookEditorHint">
+              Select a webhook to edit, or click <strong>Add</strong> to create a new webhook destination.
+            </div>
+            <div class="ui form" id="webhookEditorForm">
+              <div class="field">
+                <label>Webhook URL</label>
+                <input id="webhookinput" type="text" placeholder="https://example.com/webhook">
+              </div>
+              <div class="field">
+                <div class="ui toggle checkbox" id="webhookActiveToggle">
+                  <input type="checkbox" id="webhookActive" checked>
+                  <label>Active</label>
+                </div>
+              </div>
+              <div class="field">
+                <label>Webhook Events</label>
+                <select id="webhookEvents" class="ui fluid dropdown" multiple="">
             <option value="">Select Events</option>
             <!-- Messages and Communication -->
             <option value="Message">Message</option>
@@ -381,19 +406,47 @@
             <option value="FBMessage">FB Message</option>
             <!-- Special -->
             <option value="All">All Events</option>
-          </select>
+                </select>
+              </div>
+
+              <h5 class="ui dividing header">Security</h5>
+              <div class="field">
+                <label>HMAC Key (optional)</label>
+                <input id="webhookHmacKey" type="password" placeholder="Leave empty to keep existing (or fallback instance-level HMAC)">
+              </div>
+
+              <h5 class="ui dividing header">Retry Strategy</h5>
+              <div class="three fields">
+                <div class="field">
+                  <label>Policy</label>
+                  <select id="webhookRetryPolicy" class="ui dropdown">
+                    <option value="exponential">Exponential</option>
+                    <option value="linear">Linear</option>
+                    <option value="constant">Constant</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Delay (seconds)</label>
+                  <input id="webhookRetryDelay" type="number" min="1" value="30">
+                </div>
+                <div class="field">
+                  <label>Attempts</label>
+                  <input id="webhookRetryAttempts" type="number" min="1" max="20" value="5">
+                </div>
+              </div>
+
+              <h5 class="ui dividing header">Custom Headers</h5>
+              <div id="webhookHeadersContainer"></div>
+              <button type="button" class="ui tiny basic button" id="addWebhookHeaderBtn"><i class="plus icon"></i>Add Header</button>
+            </div>
+          </div>
         </div>
-        <div class="field"><label>Webhook URL</label><input id="webhookinput" type="text" placeholder="Type webhook URL"></div>
       </div>
-    <br>
-    <br>
-    <br>
-    <br>
-    <br>
     </div>
     <div class="actions">
+      <div class="ui mini left floated button" id="deleteWebhookBtn" style="display:none;"><i class="trash icon"></i>Delete</div>
       <div class="ui cancel button secondary">Close</div>
-      <div class="ui positive right labeled icon button">Set<i class="checkmark icon"></i></div>
+      <div class="ui positive right labeled icon button" id="saveWebhookBtn">Save<i class="checkmark icon"></i></div>
     </div>
   </div>
 

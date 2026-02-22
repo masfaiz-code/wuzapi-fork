@@ -333,6 +333,95 @@ paths:
             application/json:
               schema:
                 example: { "code": 200, "data": { "WebhookURL": "https://example.net/webhook", "Events": ["Message", "ReadReceipt"], "active": true }, "success": true }
+  /webhooks:
+    get:
+      tags:
+        - Webhook
+      summary: List multi webhooks
+      description: |
+        Returns all webhook destinations configured for current user.
+        Includes primary legacy webhook and additional webhook items.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        200:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example: { "code": 200, "data": { "webhooks": [ { "id": "wh_1", "url": "https://example.net/primary", "events": ["All"], "active": true, "hmacConfigured": true, "retries": { "policy": "exponential", "delaySeconds": 30, "attempts": 5 }, "customHeaders": [], "isPrimaryLegacy": true } ] }, "success": true }
+    post:
+      tags:
+        - Webhook
+      summary: Create webhook item
+      description: |
+        Creates an additional webhook destination for current user.
+        Use `/webhook` endpoint for the primary legacy webhook.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/MultiWebhookCreate'
+      responses:
+        201:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example: { "code": 201, "data": { "webhook": { "id": "wh_2", "url": "https://example.net/orders", "events": ["Message"], "active": true, "hmacConfigured": false, "retries": { "policy": "linear", "delaySeconds": 10, "attempts": 3 }, "customHeaders": [ { "name": "x-app", "value": "orders" } ], "isPrimaryLegacy": false } }, "success": true }
+  /webhooks/{id}:
+    put:
+      tags:
+        - Webhook
+      summary: Update webhook item
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Webhook item ID
+          schema:
+            type: string
+            example: wh_2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/MultiWebhookUpdate'
+      responses:
+        200:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example: { "code": 200, "data": { "webhook": { "id": "wh_2", "url": "https://example.net/orders", "events": ["Message", "Receipt"], "active": true, "hmacConfigured": true, "retries": { "policy": "constant", "delaySeconds": 5, "attempts": 5 }, "customHeaders": [ { "name": "x-app", "value": "orders" } ], "isPrimaryLegacy": false } }, "success": true }
+    delete:
+      tags:
+        - Webhook
+      summary: Delete webhook item
+      description: Deletes one non-primary webhook item by id.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Webhook item ID
+          schema:
+            type: string
+            example: wh_2
+      responses:
+        200:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example: { "code": 200, "data": { "Details": "Webhook deleted successfully" }, "success": true }
   /session/connect:
     post:
       tags:
@@ -2741,6 +2830,89 @@ definitions:
         type: boolean
         description: Whether the webhook should be active or not
         example: true
+
+  MultiWebhookHeader:
+    type: object
+    properties:
+      name:
+        type: string
+        example: x-app
+      value:
+        type: string
+        example: orders
+
+  MultiWebhookHmac:
+    type: object
+    properties:
+      key:
+        type: string
+        description: Optional per-webhook HMAC key (minimum 32 chars)
+        example: your_super_secret_hmac_key_minimum_32_chars
+
+  MultiWebhookRetries:
+    type: object
+    properties:
+      policy:
+        type: string
+        enum: [exponential, linear, constant]
+        example: exponential
+      delaySeconds:
+        type: integer
+        minimum: 1
+        example: 30
+      attempts:
+        type: integer
+        minimum: 1
+        maximum: 20
+        example: 5
+
+  MultiWebhookCreate:
+    type: object
+    required:
+      - url
+    properties:
+      url:
+        type: string
+        example: https://example.net/orders
+      events:
+        type: array
+        items:
+          type: string
+        example: [Message, Receipt]
+      active:
+        type: boolean
+        example: true
+      hmac:
+        $ref: '#/definitions/MultiWebhookHmac'
+      retries:
+        $ref: '#/definitions/MultiWebhookRetries'
+      customHeaders:
+        type: array
+        items:
+          $ref: '#/definitions/MultiWebhookHeader'
+
+  MultiWebhookUpdate:
+    type: object
+    properties:
+      url:
+        type: string
+        example: https://example.net/orders
+      events:
+        type: array
+        items:
+          type: string
+        example: [Message, Receipt]
+      active:
+        type: boolean
+        example: true
+      hmac:
+        $ref: '#/definitions/MultiWebhookHmac'
+      retries:
+        $ref: '#/definitions/MultiWebhookRetries'
+      customHeaders:
+        type: array
+        items:
+          $ref: '#/definitions/MultiWebhookHeader'
 
   GroupLeave:
     type: object

@@ -6,6 +6,15 @@ let updateInterval = 5000;
 let instanceToDelete = null;
 let isAdminLogin = false;
 let currentInstanceData = null;
+let webhookManagerState = {
+  items: [],
+  selectedId: null,
+  mode: 'edit',
+};
+
+const WEBHOOK_RETRY_POLICY_DEFAULT = 'exponential';
+const WEBHOOK_RETRY_DELAY_DEFAULT = 30;
+const WEBHOOK_RETRY_ATTEMPTS_DEFAULT = 5;
 
 document.addEventListener('DOMContentLoaded', function() {
 
@@ -36,6 +45,48 @@ document.addEventListener('DOMContentLoaded', function() {
         $('#webhookEvents').dropdown('set selected', 'All');
         isHandlingChange = false;
       }
+    }
+  });
+
+  $('#webhookRetryPolicy').dropdown();
+
+  $('#webhookActiveToggle').checkbox();
+
+  document.getElementById('addWebhookBtn')?.addEventListener('click', function() {
+    prepareWebhookEditorForCreate();
+  });
+
+  document.getElementById('addWebhookHeaderBtn')?.addEventListener('click', function() {
+    addWebhookHeaderRow('', '');
+  });
+
+  document.getElementById('saveWebhookBtn')?.addEventListener('click', async function() {
+    const result = await saveWebhookManagerItem();
+    if (result.success) {
+      $.toast({ class: 'success', message: 'Webhook saved successfully!' });
+      await loadWebhooksIntoManager();
+    } else {
+      $.toast({ class: 'error', message: `Problem saving webhook: ${result.error || 'Unknown error'}` });
+    }
+  });
+
+  document.getElementById('deleteWebhookBtn')?.addEventListener('click', async function() {
+    const selected = webhookManagerState.items.find(item => item.id === webhookManagerState.selectedId);
+    if (!selected || selected.isPrimaryLegacy) {
+      return;
+    }
+
+    if (!window.confirm('Delete selected webhook destination? This cannot be undone.')) {
+      return;
+    }
+
+    const result = await deleteWebhookById(selected.id);
+    if (result.success) {
+      $.toast({ class: 'success', message: 'Webhook deleted successfully!' });
+      await refreshWebhookSummaryForCurrentInstance();
+      await loadWebhooksIntoManager();
+    } else {
+      $.toast({ class: 'error', message: `Problem deleting webhook: ${result.error || 'Unknown error'}` });
     }
   });
 
@@ -550,6 +601,20 @@ async function addInstance(data) {
     hmacKey: hmacKey
   };
 
+  if (data.webhook_url && data.events && data.events.length > 0) {
+    payload.webhooks = [{
+      url: data.webhook_url,
+      events: normalizeEventsForPayload(data.events),
+      active: true,
+      retries: {
+        policy: WEBHOOK_RETRY_POLICY_DEFAULT,
+        delaySeconds: WEBHOOK_RETRY_DELAY_DEFAULT,
+        attempts: WEBHOOK_RETRY_ATTEMPTS_DEFAULT,
+      },
+      customHeaders: [],
+    }];
+  }
+
   console.log("Payload being sent:", payload);
 
   res = await fetch(baseUrl + "/admin/users", {
@@ -559,27 +624,28 @@ async function addInstance(data) {
   });
 
   const responseData = await res.json();
+  if (responseData?.success && responseData?.data?.id && payload.webhooks) {
+    const summary = {
+      total: payload.webhooks.length,
+      active: payload.webhooks.filter(w => w.active !== false).length,
+      primary: payload.webhooks[0]?.url || payload.webhook || '',
+      events: payload.webhooks.flatMap(w => w.events || []),
+    };
+    localStorage.setItem(`webhookSummary:${responseData.data.id}`, JSON.stringify(summary));
+  }
   console.log("Response:", responseData);
   return responseData;
 }
 
 function webhookModal() {
-  getWebhook().then((response)=>{
-    if(response.success==true) {
-      $('#webhookEvents').val(response.data.subscribe);
-      $('#webhookEvents').dropdown('set selected', response.data.subscribe);
-      $('#webhookinput').val(response.data.webhook);
-      $('#modalSetWebhook').modal({onApprove: function() {
-        setWebhook().then((result)=>{
-          if(result.success===true) {
-             $.toast({ class: 'success', message: `Webhook set successfully !`});
-          } else {
-             $.toast({ class: 'error', message: `Problem setting webhook: ${result.error}`});
-          }
-        });
-        return true;
-      }}).modal('show');
-    }
+  loadWebhooksIntoManager().then(() => {
+    $('#modalSetWebhook').modal({
+      autofocus: false,
+      closable: true,
+      onApprove: function() {
+        return false;
+      }
+    }).modal('show');
   });
 }
 
@@ -623,6 +689,7 @@ function handleRegularLogin(token,notifications=false) {
       showWidgets();
       $('#'+status.data.instanceId).removeClass('hidden');
       updateUser();
+      refreshWebhookSummaryForCurrentInstance();
     } else {
       removeLocalStorageItem('token');
       showError("Invalid credentials");
@@ -655,6 +722,7 @@ function updateAdmin() {
     getUsers().then((result) => {
       if(result.success==true) {
         populateInstances(result.data)
+        refreshWebhookSummaryForAllVisibleInstances();
       } 
     });
   } else {
@@ -662,6 +730,7 @@ function updateAdmin() {
     status().then((result)=> {
       if(result.success==true) {
         populateInstances([result.data]);
+        refreshWebhookSummaryForAllVisibleInstances();
       } 
     });
   }
@@ -772,6 +841,15 @@ function openDashboard(id,token) {
   $('.card.no-hover').addClass('hidden');
   $(`#instance-card-${id}`).removeClass('hidden');
   $('.adminlogin').show();
+  setTimeout(() => {
+    refreshWebhookSummaryForCurrentInstance();
+  }, 0);
+}
+
+function refreshWebhookSummaryForAllVisibleInstances() {
+  const currentInstance = getLocalStorageItem('currentInstance');
+  if (!currentInstance) return;
+  refreshWebhookSummaryForCurrentInstance();
 }
 
 function goBackToList() {
@@ -836,6 +914,330 @@ async function setWebhook() {
   });
   data = await res.json();
   return data;
+}
+
+function normalizeEventsForPayload(events) {
+  if (!Array.isArray(events)) return [];
+  const clean = events.filter(Boolean);
+  if (clean.includes('All')) return ['All'];
+  return [...new Set(clean)];
+}
+
+function getWebhookHeadersFromEditor() {
+  const rows = document.querySelectorAll('.webhook-header-row');
+  const headers = [];
+  rows.forEach((row) => {
+    const name = row.querySelector('.webhook-header-name')?.value?.trim();
+    const value = row.querySelector('.webhook-header-value')?.value?.trim();
+    if (name) headers.push({ name, value: value || '' });
+  });
+  return headers;
+}
+
+function clearWebhookHeaderRows() {
+  const container = document.getElementById('webhookHeadersContainer');
+  if (container) container.innerHTML = '';
+}
+
+function addWebhookHeaderRow(name = '', value = '') {
+  const container = document.getElementById('webhookHeadersContainer');
+  if (!container) return;
+  const row = document.createElement('div');
+  row.className = 'webhook-header-row';
+  row.innerHTML = `
+    <input type="text" class="webhook-header-name" placeholder="Header name" value="${name}">
+    <input type="text" class="webhook-header-value" placeholder="Header value" value="${value}">
+    <button type="button" class="ui tiny basic icon button webhook-header-remove"><i class="trash icon"></i></button>
+  `;
+  row.querySelector('.webhook-header-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+
+function renderWebhookList() {
+  const list = document.getElementById('webhookList');
+  if (!list) return;
+
+  if (!webhookManagerState.items.length) {
+    list.innerHTML = '<div class="ui tiny message">No webhooks configured.</div>';
+    return;
+  }
+
+  list.innerHTML = webhookManagerState.items.map((item) => {
+    const activeClass = webhookManagerState.selectedId === item.id ? 'active' : '';
+    const badges = [
+      `<span class="ui mini ${item.active ? 'green' : 'grey'} label">${item.active ? 'Active' : 'Inactive'}</span>`,
+      item.isPrimaryLegacy ? '<span class="ui mini teal label">Primary</span>' : '',
+      item.hmacConfigured ? '<span class="ui mini orange label">HMAC</span>' : ''
+    ].join(' ');
+
+    return `
+      <div class="webhook-list-item ${activeClass}" data-webhook-id="${item.id}">
+        <div class="webhook-list-url">${item.url || '(empty url)'}</div>
+        <div style="margin:.35rem 0;">${badges}</div>
+        <div class="meta">${(item.events || []).join(', ') || 'No events'}</div>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.webhook-list-item').forEach((el) => {
+    el.addEventListener('click', () => {
+      const webhookId = el.getAttribute('data-webhook-id');
+      selectWebhook(webhookId);
+    });
+  });
+}
+
+function selectWebhook(webhookId) {
+  const selected = webhookManagerState.items.find(item => item.id === webhookId);
+  if (!selected) return;
+
+  webhookManagerState.selectedId = webhookId;
+  webhookManagerState.mode = 'edit';
+
+  $('#webhookinput').val(selected.url || '');
+  $('#webhookEvents').dropdown('clear');
+  $('#webhookEvents').dropdown('set selected', selected.events || []);
+  $('#webhookActive').prop('checked', !!selected.active);
+  $('#webhookRetryPolicy').dropdown('set selected', selected.retries?.policy || WEBHOOK_RETRY_POLICY_DEFAULT);
+  $('#webhookRetryDelay').val(selected.retries?.delaySeconds || WEBHOOK_RETRY_DELAY_DEFAULT);
+  $('#webhookRetryAttempts').val(selected.retries?.attempts || WEBHOOK_RETRY_ATTEMPTS_DEFAULT);
+  $('#webhookHmacKey').val('');
+
+  clearWebhookHeaderRows();
+  if (Array.isArray(selected.customHeaders) && selected.customHeaders.length > 0) {
+    selected.customHeaders.forEach((h) => addWebhookHeaderRow(h.name || '', h.value || ''));
+  } else {
+    addWebhookHeaderRow('', '');
+  }
+
+  if (selected.isPrimaryLegacy) {
+    $('#deleteWebhookBtn').hide();
+  } else {
+    $('#deleteWebhookBtn').show();
+  }
+
+  renderWebhookList();
+}
+
+function prepareWebhookEditorForCreate() {
+  webhookManagerState.mode = 'create';
+  webhookManagerState.selectedId = null;
+
+  $('#webhookinput').val('');
+  $('#webhookEvents').dropdown('clear');
+  $('#webhookActive').prop('checked', true);
+  $('#webhookRetryPolicy').dropdown('set selected', WEBHOOK_RETRY_POLICY_DEFAULT);
+  $('#webhookRetryDelay').val(WEBHOOK_RETRY_DELAY_DEFAULT);
+  $('#webhookRetryAttempts').val(WEBHOOK_RETRY_ATTEMPTS_DEFAULT);
+  $('#webhookHmacKey').val('');
+  clearWebhookHeaderRows();
+  addWebhookHeaderRow('', '');
+  $('#deleteWebhookBtn').hide();
+  renderWebhookList();
+}
+
+function getWebhookSummaryForInstance(instance) {
+  const cacheKey = `webhookSummary:${instance.id}`;
+  const cached = localStorage.getItem(cacheKey);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (e) {}
+  }
+
+  let events = [];
+  if (typeof instance.events === 'string' && instance.events.trim() !== '') {
+    events = instance.events.split(',').map(e => e.trim()).filter(Boolean);
+  }
+
+  return {
+    total: instance.webhook ? 1 : 0,
+    active: instance.webhook ? 1 : 0,
+    primary: instance.webhook || '',
+    events,
+  };
+}
+
+async function refreshWebhookSummaryForCurrentInstance() {
+  const currentInstance = getLocalStorageItem('currentInstance');
+  if (!currentInstance || !currentInstanceData || currentInstanceData.id !== currentInstance) {
+    return;
+  }
+
+  try {
+    const response = await getWebhooks();
+    if (!response.success || !response.data || !Array.isArray(response.data.webhooks)) {
+      return;
+    }
+
+    const items = response.data.webhooks;
+    const activeItems = items.filter(i => !!i.active);
+    const primary = items.find(i => !!i.isPrimaryLegacy);
+    const eventSet = new Set();
+    activeItems.forEach(i => (i.events || []).forEach(e => eventSet.add(e)));
+
+    const summary = {
+      total: items.length,
+      active: activeItems.length,
+      primary: primary?.url || '',
+      events: Array.from(eventSet),
+    };
+
+    localStorage.setItem(`webhookSummary:${currentInstance}`, JSON.stringify(summary));
+    currentInstanceData.webhook = summary.primary;
+    currentInstanceData.events = summary.events.join(', ');
+    populateInstances([currentInstanceData]);
+  } catch (e) {
+    console.warn('Failed refreshing webhook summary', e);
+  }
+}
+
+function buildWebhookPayloadFromEditor() {
+  const url = $('#webhookinput').val().trim();
+  const events = normalizeEventsForPayload($('#webhookEvents').dropdown('get value'));
+  const active = $('#webhookActive').is(':checked');
+  const hmac = $('#webhookHmacKey').val().trim();
+  const retryPolicy = $('#webhookRetryPolicy').dropdown('get value') || WEBHOOK_RETRY_POLICY_DEFAULT;
+  const retryDelay = parseInt($('#webhookRetryDelay').val(), 10) || WEBHOOK_RETRY_DELAY_DEFAULT;
+  const retryAttempts = parseInt($('#webhookRetryAttempts').val(), 10) || WEBHOOK_RETRY_ATTEMPTS_DEFAULT;
+  const customHeaders = getWebhookHeadersFromEditor();
+
+  const payload = {
+    url,
+    events,
+    active,
+    retries: {
+      policy: retryPolicy,
+      delaySeconds: retryDelay,
+      attempts: retryAttempts,
+    },
+    customHeaders,
+  };
+
+  if (hmac !== '') {
+    payload.hmac = { key: hmac };
+  }
+
+  return payload;
+}
+
+async function getWebhooks(token='') {
+  if(token==='') token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  myHeaders.append('Content-Type', 'application/json');
+  const res = await fetch(baseUrl + "/webhooks", {
+    method: "GET",
+    headers: myHeaders,
+  });
+  return await res.json();
+}
+
+async function createWebhookItem(payload) {
+  const token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  myHeaders.append('Content-Type', 'application/json');
+  const res = await fetch(baseUrl + "/webhooks", {
+    method: "POST",
+    headers: myHeaders,
+    body: JSON.stringify(payload),
+  });
+  return await res.json();
+}
+
+async function updateWebhookItem(webhookId, payload) {
+  const token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  myHeaders.append('Content-Type', 'application/json');
+  const res = await fetch(baseUrl + `/webhooks/${webhookId}`, {
+    method: "PUT",
+    headers: myHeaders,
+    body: JSON.stringify(payload),
+  });
+  return await res.json();
+}
+
+async function deleteWebhookById(webhookId) {
+  const token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  myHeaders.append('Content-Type', 'application/json');
+  const res = await fetch(baseUrl + `/webhooks/${webhookId}`, {
+    method: "DELETE",
+    headers: myHeaders,
+  });
+  return await res.json();
+}
+
+async function loadWebhooksIntoManager() {
+  const response = await getWebhooks();
+  if (!response.success) {
+    $.toast({ class: 'error', message: `Failed loading webhooks: ${response.error || 'Unknown error'}` });
+    return;
+  }
+
+  webhookManagerState.items = response.data.webhooks || [];
+  if (webhookManagerState.items.length > 0) {
+    const stillExists = webhookManagerState.items.some(item => item.id === webhookManagerState.selectedId);
+    if (!stillExists) {
+      webhookManagerState.selectedId = webhookManagerState.items[0].id;
+    }
+    renderWebhookList();
+    selectWebhook(webhookManagerState.selectedId);
+  } else {
+    webhookManagerState.selectedId = null;
+    renderWebhookList();
+    prepareWebhookEditorForCreate();
+  }
+}
+
+async function saveWebhookManagerItem() {
+  const payload = buildWebhookPayloadFromEditor();
+
+  if (!payload.url) {
+    return { success: false, error: 'Webhook URL is required' };
+  }
+
+  if (payload.events.includes('All')) {
+    payload.events = ['All'];
+  }
+
+  if (webhookManagerState.mode === 'create') {
+    const result = await createWebhookItem(payload);
+    await refreshWebhookSummaryForCurrentInstance();
+    return result;
+  }
+
+  const selected = webhookManagerState.items.find(item => item.id === webhookManagerState.selectedId);
+  if (!selected) {
+    return { success: false, error: 'No webhook selected' };
+  }
+
+  if (selected.isPrimaryLegacy) {
+    const token = getLocalStorageItem('token');
+    const myHeaders = new Headers();
+    myHeaders.append('token', token);
+    myHeaders.append('Content-Type', 'application/json');
+    const legacyBody = {
+      webhook: payload.url,
+      events: payload.events,
+      active: payload.active,
+    };
+    const res = await fetch(baseUrl + '/webhook', {
+      method: 'PUT',
+      headers: myHeaders,
+      body: JSON.stringify(legacyBody),
+    });
+    const result = await res.json();
+    await refreshWebhookSummaryForCurrentInstance();
+    return result;
+  }
+
+  const result = await updateWebhookItem(selected.id, payload);
+  await refreshWebhookSummaryForCurrentInstance();
+  return result;
 }
  
 function doUserAvatar() {
@@ -1188,6 +1590,9 @@ function populateInstances(instances) {
   }
   instances.forEach(instance => {
 
+  const webhookSummary = getWebhookSummaryForInstance(instance);
+  const webhookSummaryEvents = (webhookSummary.events || []).join(', ');
+
   const row = `
       <tr>
         <td>${instance.id}</td>
@@ -1238,8 +1643,12 @@ function populateInstances(instances) {
                               <div class="content">${instance.jid || 'Not available'}</div>
                           </div>
                           <div class="item">
-                              <div class="header">Webhook</div>
-                              <div class="content" style="word-break: break-all;">${instance.webhook || 'Not configured'}</div>
+                              <div class="header">Primary Webhook</div>
+                              <div class="content" style="word-break: break-all;">${webhookSummary.primary || instance.webhook || 'Not configured'}</div>
+                          </div>
+                          <div class="item">
+                              <div class="header">Webhook Destinations</div>
+                              <div class="content">${webhookSummary.total || 0} total / ${webhookSummary.active || 0} active</div>
                           </div>
                           <div class="item">
                               <div class="header">HMAC</div>
@@ -1247,7 +1656,7 @@ function populateInstances(instances) {
                           </div>
                           <div class="item">
                               <div class="header">Subscribed Events</div>
-                              <div class="content">${instance.events || 'Not configured'}</div>
+                              <div class="content">${webhookSummaryEvents || instance.events || 'Not configured'}</div>
                           </div>
                           <div class="item">
                               <div class="header">Message History</div>
