@@ -233,6 +233,22 @@ The Docker configuration will:
 
 **Note:** The `.env` file is already included in `.gitignore` to avoid committing sensitive information to your repository.
 
+### GHCR (GitHub Container Registry)
+
+This repository can publish Docker images automatically to GHCR via GitHub Actions.
+
+- Workflow: `.github/workflows/docker-publish.yml`
+- Image: `ghcr.io/<owner>/<repo>`
+- Triggers: push to `main`, version tags like `v1.0.0`, and manual dispatch.
+
+Pull examples:
+
+```bash
+docker pull ghcr.io/masfaiz-code/wuzapi-fork:latest
+docker pull ghcr.io/masfaiz-code/wuzapi-fork:main
+docker pull ghcr.io/masfaiz-code/wuzapi-fork:sha-<shortsha>
+```
+
 ## Usage
 
 To interact with the API, you must include the `Authorization` header in HTTP requests, containing the user's authentication token. You can have multiple users (different WhatsApp numbers) on the same server.  
