@@ -29,9 +29,12 @@ var migrations = []Migration{
             -- PostgreSQL version
             DO $$
             BEGIN
-                IF NOT EXISTS (
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'users' AND table_schema = current_schema()
+                ) AND NOT EXISTS (
                     SELECT 1 FROM information_schema.columns 
-                    WHERE table_name = 'users' AND column_name = 'proxy_url'
+                    WHERE table_name = 'users' AND column_name = 'proxy_url' AND table_schema = current_schema()
                 ) THEN
                     ALTER TABLE users ADD COLUMN proxy_url TEXT DEFAULT '';
                 END IF;
@@ -84,7 +87,7 @@ BEGIN
     -- Only execute if the column is currently integer type
     IF EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'users' AND column_name = 'id' AND data_type = 'integer'
+        WHERE table_name = 'users' AND column_name = 'id' AND data_type = 'integer' AND table_schema = current_schema()
     ) THEN
         -- For PostgreSQL
         ALTER TABLE users ADD COLUMN new_id TEXT;
@@ -102,7 +105,7 @@ const initialSchemaSQL = `
 -- PostgreSQL version
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users' AND table_schema = current_schema()) THEN
         CREATE TABLE users (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -126,43 +129,43 @@ const addS3SupportSQL = `
 DO $$
 BEGIN
     -- Add S3 configuration columns if they don't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_enabled') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users' AND table_schema = current_schema()) AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_enabled' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN s3_enabled BOOLEAN DEFAULT FALSE;
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_endpoint') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_endpoint' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN s3_endpoint TEXT DEFAULT '';
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_region') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_region' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN s3_region TEXT DEFAULT '';
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_bucket') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_bucket' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN s3_bucket TEXT DEFAULT '';
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_access_key') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_access_key' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN s3_access_key TEXT DEFAULT '';
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_secret_key') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_secret_key' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN s3_secret_key TEXT DEFAULT '';
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_path_style') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_path_style' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN s3_path_style BOOLEAN DEFAULT TRUE;
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_public_url') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_public_url' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN s3_public_url TEXT DEFAULT '';
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'media_delivery') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'media_delivery' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN media_delivery TEXT DEFAULT 'base64';
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_retention_days') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_retention_days' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN s3_retention_days INTEGER DEFAULT 30;
     END IF;
 END $$;
@@ -172,7 +175,7 @@ const addMessageHistorySQL = `
 -- PostgreSQL version
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'message_history') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'message_history' AND table_schema = current_schema()) THEN
         CREATE TABLE message_history (
             id SERIAL PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -189,7 +192,7 @@ BEGIN
     END IF;
     
     -- Add history column to users table if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'history') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users' AND table_schema = current_schema()) AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'history' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN history INTEGER DEFAULT 0;
     END IF;
 END $$;
@@ -200,7 +203,7 @@ const addQuotedMessageIDSQL = `
 DO $$
 BEGIN
     -- Add quoted_message_id column to message_history table if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'message_history' AND column_name = 'quoted_message_id') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'message_history' AND table_schema = current_schema()) AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'message_history' AND column_name = 'quoted_message_id' AND table_schema = current_schema()) THEN
         ALTER TABLE message_history ADD COLUMN quoted_message_id TEXT;
     END IF;
 END $$;
@@ -211,7 +214,7 @@ const addDataJsonSQL = `
 DO $$
 BEGIN
     -- Add dataJson column to message_history table if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'message_history' AND column_name = 'datajson') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'message_history' AND table_schema = current_schema()) AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'message_history' AND column_name = 'datajson' AND table_schema = current_schema()) THEN
         ALTER TABLE message_history ADD COLUMN datajson TEXT;
     END IF;
 END $$;
@@ -223,7 +226,7 @@ const addUserWebhooksSQL = `
 -- PostgreSQL version
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'user_webhooks') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'user_webhooks' AND table_schema = current_schema()) THEN
         CREATE TABLE user_webhooks (
             id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -287,6 +290,11 @@ func initializeSchema(db *sqlx.DB) error {
 		return fmt.Errorf("failed to create migrations table: %w", err)
 	}
 
+	// Self-heal: users table can be missing while migration #1 is already marked applied
+	if err := ensureUsersTableExists(db); err != nil {
+		return fmt.Errorf("failed to ensure users table exists: %w", err)
+	}
+
 	// Get already applied migrations
 	applied, err := getAppliedMigrations(db)
 	if err != nil {
@@ -302,6 +310,77 @@ func initializeSchema(db *sqlx.DB) error {
 		}
 	}
 
+	return nil
+}
+
+func ensureUsersTableExists(db *sqlx.DB) error {
+	var usersTableExists bool
+	var err error
+
+	switch db.DriverName() {
+	case "postgres":
+		err = db.Get(&usersTableExists, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.tables
+				WHERE table_name = 'users'
+				AND table_schema = current_schema()
+			)`)
+	case "sqlite":
+		err = db.Get(&usersTableExists, `
+			SELECT EXISTS (
+				SELECT 1 FROM sqlite_master
+				WHERE type='table' AND name='users'
+			)`)
+	default:
+		return fmt.Errorf("unsupported database driver: %s", db.DriverName())
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed checking users table existence: %w", err)
+	}
+
+	if usersTableExists {
+		fmt.Printf("[migration-debug] users table already exists in active schema\n")
+		return nil
+	}
+
+	fmt.Printf("[migration-debug] users table missing, creating bootstrap users table\n")
+
+	if db.DriverName() == "postgres" {
+		_, err = db.Exec(`
+			CREATE TABLE IF NOT EXISTS users (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				token TEXT NOT NULL,
+				webhook TEXT NOT NULL DEFAULT '',
+				jid TEXT NOT NULL DEFAULT '',
+				qrcode TEXT NOT NULL DEFAULT '',
+				connected INTEGER,
+				expiration INTEGER,
+				events TEXT NOT NULL DEFAULT '',
+				proxy_url TEXT DEFAULT ''
+			)`)
+	} else {
+		_, err = db.Exec(`
+			CREATE TABLE IF NOT EXISTS users (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				token TEXT NOT NULL,
+				webhook TEXT NOT NULL DEFAULT '',
+				jid TEXT NOT NULL DEFAULT '',
+				qrcode TEXT NOT NULL DEFAULT '',
+				connected INTEGER,
+				expiration INTEGER,
+				events TEXT NOT NULL DEFAULT '',
+				proxy_url TEXT DEFAULT ''
+			)`)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed creating bootstrap users table: %w", err)
+	}
+
+	fmt.Printf("[migration-debug] bootstrap users table created successfully\n")
 	return nil
 }
 
@@ -801,7 +880,7 @@ const addHmacKeySQL = `
 DO $$
 BEGIN
     -- Add hmac_key column as BYTEA for encrypted data
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'hmac_key') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users' AND table_schema = current_schema()) AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'hmac_key' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN hmac_key BYTEA;
     END IF;
 END $$;
