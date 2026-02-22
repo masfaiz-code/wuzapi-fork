@@ -5388,6 +5388,7 @@ func (s *server) EditUser() http.HandlerFunc {
 		if len(user.Webhooks) > 0 {
 			delQuery := "DELETE FROM user_webhooks WHERE user_id = $1 AND is_primary_legacy = false"
 			if s.db.DriverName() == "sqlite" {
+				delQuery = strings.ReplaceAll(delQuery, "is_primary_legacy = false", "is_primary_legacy = 0")
 				delQuery = strings.ReplaceAll(delQuery, "$1", "?")
 			}
 			if _, delErr := s.db.Exec(delQuery, userID); delErr != nil {

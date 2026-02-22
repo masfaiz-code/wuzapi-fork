@@ -363,9 +363,10 @@ func (s *server) getPrimaryLegacyWebhook(userID string) (*UserWebhook, error) {
 		       COALESCE(is_primary_legacy, false) AS is_primary_legacy,
 		       created_at, updated_at
 		FROM user_webhooks
-		WHERE user_id = $1 AND is_primary_legacy = 1
+		WHERE user_id = $1 AND is_primary_legacy = true
 		LIMIT 1`
 	if s.db.DriverName() == "sqlite" {
+		query = strings.ReplaceAll(query, "is_primary_legacy = true", "is_primary_legacy = 1")
 		query = sqliteRebind(query, 1)
 	}
 
