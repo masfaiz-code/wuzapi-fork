@@ -239,7 +239,7 @@ func checkIfSubscribedToEvent(subscribedEvents []string, eventType string, userI
 
 // Connects to Whatsapp Websocket on server startup if last state was connected
 func (s *server) connectOnStartup() {
-	rows, err := s.db.Queryx("SELECT id,name,token,jid,webhook,events,proxy_url,CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled,media_delivery,COALESCE(history, 0) as history,hmac_key FROM users WHERE connected=1")
+	rows, err := s.db.Queryx("SELECT id,name,token,jid,webhook,events,proxy_url,CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled,COALESCE(media_delivery, 'base64') as media_delivery,COALESCE(history, 0) as history,hmac_key FROM users WHERE connected=1")
 	if err != nil {
 		log.Error().Err(err).Msg("DB Problem")
 		return
@@ -818,7 +818,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		lastMessageCache.Set(mycli.userID, &evt.Info, cache.DefaultExpiration)
 		myuserinfo, found := userinfocache.Get(mycli.token)
 		if !found {
-			err := mycli.db.Get(&s3Config, "SELECT CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled, media_delivery FROM users WHERE id = $1", txtid)
+			err := mycli.db.Get(&s3Config, "SELECT CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled, COALESCE(media_delivery, 'base64') as media_delivery FROM users WHERE id = $1", txtid)
 			if err != nil {
 				log.Error().Err(err).Msg("onMessage Failed to get S3 config from DB as it was not on cache")
 				s3Config.Enabled = "false"
@@ -827,6 +827,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		} else {
 			s3Config.Enabled = myuserinfo.(Values).Get("S3Enabled")
 			s3Config.MediaDelivery = myuserinfo.(Values).Get("MediaDelivery")
+			if s3Config.MediaDelivery == "" {
+				s3Config.MediaDelivery = "base64"
+			}
 		}
 
 		postmap["type"] = "Message"
