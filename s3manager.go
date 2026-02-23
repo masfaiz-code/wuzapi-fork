@@ -228,6 +228,32 @@ func (m *S3Manager) UploadToS3(ctx context.Context, userID string, key string, d
 
 	_, err := client.PutObject(ctx, input)
 	if err != nil {
+		// Some S3-compatible providers (R2/MinIO variants) reject ACL headers.
+		errLower := strings.ToLower(err.Error())
+		if strings.Contains(errLower, "accesscontrollistnotsupported") ||
+			strings.Contains(errLower, "acl") ||
+			strings.Contains(errLower, "x-amz-acl") {
+			inputNoACL := &s3.PutObjectInput{
+				Bucket:       input.Bucket,
+				Key:          input.Key,
+				Body:         bytes.NewReader(data),
+				ContentType:  input.ContentType,
+				CacheControl: input.CacheControl,
+				Expires:      input.Expires,
+			}
+			if input.ContentDisposition != nil {
+				inputNoACL.ContentDisposition = input.ContentDisposition
+			}
+
+			_, retryErr := client.PutObject(ctx, inputNoACL)
+			if retryErr == nil {
+				log.Warn().Str("userID", userID).Str("bucket", config.Bucket).Msg("S3 upload succeeded after retrying without ACL")
+				return nil
+			}
+
+			return fmt.Errorf("failed to upload to S3 (with ACL and without ACL): first=%v retry=%w", err, retryErr)
+		}
+
 		return fmt.Errorf("failed to upload to S3: %w", err)
 	}
 
