@@ -2161,13 +2161,32 @@ async function deleteS3Config() {
   $('#deleteS3Config').addClass('loading disabled');
   
   try {
-    const res = await fetch(baseUrl + "/session/s3/config", {
+    // Some proxies/platforms may block DELETE; fallback to POST alias endpoint.
+    let res = await fetch(baseUrl + "/session/s3/config", {
       method: "DELETE",
       headers: myHeaders
     });
-    
-    const data = await res.json();
-    if (data.success) {
+
+    if (res.status === 405 || res.status === 501 || res.status === 404 || res.status === 502 || res.status === 503) {
+      res = await fetch(baseUrl + "/session/s3/config/delete", {
+        method: "POST",
+        headers: myHeaders
+      });
+    }
+
+    let data = null;
+    let rawText = '';
+    try {
+      data = await res.json();
+    } catch (parseError) {
+      try {
+        rawText = await res.text();
+      } catch (_) {
+        rawText = '';
+      }
+    }
+
+    if (data && data.success) {
       showSuccess('S3 configuration deleted successfully');
       
       // Clear all form fields
@@ -2186,10 +2205,13 @@ async function deleteS3Config() {
       
       $('#modalS3Config').modal('hide');
     } else {
-      showError('Failed to delete S3 configuration: ' + (data.error || 'Unknown error'));
+      const errorMessage = (data && data.error)
+        ? data.error
+        : (rawText ? ('HTTP ' + res.status + ': ' + rawText) : ('HTTP ' + res.status));
+      showError('Failed to delete S3 configuration: ' + errorMessage);
     }
   } catch (error) {
-    showError('Error deleting S3 configuration');
+    showError('Error deleting S3 configuration: ' + (error && error.message ? error.message : 'Unknown error'));
     console.error('Error:', error);
   } finally {
     $('#deleteS3Config').removeClass('loading disabled');
