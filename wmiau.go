@@ -832,6 +832,67 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			}
 		}
 
+		normalizedMediaDelivery := strings.ToLower(strings.TrimSpace(s3Config.MediaDelivery))
+		if normalizedMediaDelivery == "" {
+			normalizedMediaDelivery = "base64"
+		}
+		s3Enabled := strings.EqualFold(strings.TrimSpace(s3Config.Enabled), "true")
+		shouldUploadS3 := s3Enabled && (normalizedMediaDelivery == "s3" || normalizedMediaDelivery == "both")
+		shouldIncludeBase64 := normalizedMediaDelivery == "base64" || normalizedMediaDelivery == "both"
+		_, _, s3ClientReady := GetS3Manager().GetClient(txtid)
+
+		if shouldUploadS3 && !s3ClientReady {
+			var runtimeS3Config struct {
+				Enabled       bool   `db:"s3_enabled"`
+				Endpoint      string `db:"s3_endpoint"`
+				Region        string `db:"s3_region"`
+				Bucket        string `db:"s3_bucket"`
+				AccessKey     string `db:"s3_access_key"`
+				SecretKey     string `db:"s3_secret_key"`
+				PathStyle     bool   `db:"s3_path_style"`
+				PublicURL     string `db:"s3_public_url"`
+				RetentionDays int    `db:"s3_retention_days"`
+			}
+
+			err := mycli.db.Get(&runtimeS3Config, `
+				SELECT s3_enabled, s3_endpoint, s3_region, s3_bucket,
+				       s3_access_key, s3_secret_key, s3_path_style,
+				       s3_public_url, s3_retention_days
+				FROM users WHERE id = $1`, txtid)
+			if err != nil {
+				log.Error().Err(err).Str("userID", txtid).Str("messageID", evt.Info.ID).Msg("Failed to load runtime S3 config for lazy initialization")
+			} else if runtimeS3Config.Enabled {
+				err = GetS3Manager().InitializeS3Client(txtid, &S3Config{
+					Enabled:       runtimeS3Config.Enabled,
+					Endpoint:      runtimeS3Config.Endpoint,
+					Region:        runtimeS3Config.Region,
+					Bucket:        runtimeS3Config.Bucket,
+					AccessKey:     runtimeS3Config.AccessKey,
+					SecretKey:     runtimeS3Config.SecretKey,
+					PathStyle:     runtimeS3Config.PathStyle,
+					PublicURL:     runtimeS3Config.PublicURL,
+					RetentionDays: runtimeS3Config.RetentionDays,
+				})
+				if err != nil {
+					log.Error().Err(err).Str("userID", txtid).Str("messageID", evt.Info.ID).Msg("Failed lazy initialization of S3 client")
+				} else {
+					_, _, s3ClientReady = GetS3Manager().GetClient(txtid)
+					log.Info().Str("userID", txtid).Str("messageID", evt.Info.ID).Bool("s3_client_ready", s3ClientReady).Msg("Lazy initialized S3 client for media upload")
+				}
+			}
+		}
+
+		log.Info().
+			Str("userID", txtid).
+			Str("messageID", evt.Info.ID).
+			Str("s3_enabled_raw", s3Config.Enabled).
+			Str("media_delivery_raw", s3Config.MediaDelivery).
+			Str("media_delivery_normalized", normalizedMediaDelivery).
+			Bool("should_upload_s3", shouldUploadS3).
+			Bool("should_include_base64", shouldIncludeBase64).
+			Bool("s3_client_ready", s3ClientReady).
+			Msg("Resolved media delivery configuration")
+
 		postmap["type"] = "Message"
 		dowebhook = 1
 		metaParts := []string{fmt.Sprintf("pushname: %s", evt.Info.PushName), fmt.Sprintf("timestamp: %s", evt.Info.Timestamp)}
@@ -881,7 +942,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				}
 
 				// Process S3 upload if enabled
-				if s3Config.Enabled == "true" && (s3Config.MediaDelivery == "s3" || s3Config.MediaDelivery == "both") {
+				if shouldUploadS3 {
 					// Get sender JID for inbox/outbox determination
 					isIncoming := evt.Info.IsFromMe == false
 					contactJID := evt.Info.Sender.String()
@@ -901,14 +962,14 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 						isIncoming,
 					)
 					if err != nil {
-						log.Error().Err(err).Msg("Failed to upload image to S3")
+						log.Error().Err(err).Str("userID", txtid).Str("messageID", evt.Info.ID).Bool("s3_client_ready", s3ClientReady).Str("media_delivery", normalizedMediaDelivery).Msg("Failed to upload image to S3")
 					} else {
 						postmap["s3"] = s3Data
 					}
 				}
 
 				// Convert the image to base64 if needed
-				if s3Config.MediaDelivery == "base64" || s3Config.MediaDelivery == "both" {
+				if shouldIncludeBase64 {
 					base64String, mimeType, err := fileToBase64(tmpPath)
 					if err != nil {
 						log.Error().Err(err).Msg("Failed to convert image to base64")
@@ -969,7 +1030,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				}
 
 				// Process S3 upload if enabled
-				if s3Config.Enabled == "true" && (s3Config.MediaDelivery == "s3" || s3Config.MediaDelivery == "both") {
+				if shouldUploadS3 {
 					// Get sender JID for inbox/outbox determination
 					isIncoming := evt.Info.IsFromMe == false
 					contactJID := evt.Info.Sender.String()
@@ -989,14 +1050,14 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 						isIncoming,
 					)
 					if err != nil {
-						log.Error().Err(err).Msg("Failed to upload audio to S3")
+						log.Error().Err(err).Str("userID", txtid).Str("messageID", evt.Info.ID).Bool("s3_client_ready", s3ClientReady).Str("media_delivery", normalizedMediaDelivery).Msg("Failed to upload audio to S3")
 					} else {
 						postmap["s3"] = s3Data
 					}
 				}
 
 				// Convert the audio to base64 if needed
-				if s3Config.MediaDelivery == "base64" || s3Config.MediaDelivery == "both" {
+				if shouldIncludeBase64 {
 					base64String, mimeType, err := fileToBase64(tmpPath)
 					if err != nil {
 						log.Error().Err(err).Msg("Failed to convert audio to base64")
@@ -1062,7 +1123,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				}
 
 				// Process S3 upload if enabled
-				if s3Config.Enabled == "true" && (s3Config.MediaDelivery == "s3" || s3Config.MediaDelivery == "both") {
+				if shouldUploadS3 {
 					// Get sender JID for inbox/outbox determination
 					isIncoming := evt.Info.IsFromMe == false
 					contactJID := evt.Info.Sender.String()
@@ -1082,14 +1143,14 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 						isIncoming,
 					)
 					if err != nil {
-						log.Error().Err(err).Msg("Failed to upload document to S3")
+						log.Error().Err(err).Str("userID", txtid).Str("messageID", evt.Info.ID).Bool("s3_client_ready", s3ClientReady).Str("media_delivery", normalizedMediaDelivery).Msg("Failed to upload document to S3")
 					} else {
 						postmap["s3"] = s3Data
 					}
 				}
 
 				// Convert the document to base64 if needed
-				if s3Config.MediaDelivery == "base64" || s3Config.MediaDelivery == "both" {
+				if shouldIncludeBase64 {
 					base64String, mimeType, err := fileToBase64(tmpPath)
 					if err != nil {
 						log.Error().Err(err).Msg("Failed to convert document to base64")
@@ -1144,7 +1205,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				}
 
 				// Process S3 upload if enabled
-				if s3Config.Enabled == "true" && (s3Config.MediaDelivery == "s3" || s3Config.MediaDelivery == "both") {
+				if shouldUploadS3 {
 					// Get sender JID for inbox/outbox determination
 					isIncoming := evt.Info.IsFromMe == false
 					contactJID := evt.Info.Sender.String()
@@ -1164,14 +1225,14 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 						isIncoming,
 					)
 					if err != nil {
-						log.Error().Err(err).Msg("Failed to upload video to S3")
+						log.Error().Err(err).Str("userID", txtid).Str("messageID", evt.Info.ID).Bool("s3_client_ready", s3ClientReady).Str("media_delivery", normalizedMediaDelivery).Msg("Failed to upload video to S3")
 					} else {
 						postmap["s3"] = s3Data
 					}
 				}
 
 				// Convert the video to base64 if needed
-				if s3Config.MediaDelivery == "base64" || s3Config.MediaDelivery == "both" {
+				if shouldIncludeBase64 {
 					base64String, mimeType, err := fileToBase64(tmpPath)
 					if err != nil {
 						log.Error().Err(err).Msg("Failed to convert video to base64")
@@ -1226,7 +1287,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				}
 
 				// if using S3 (same stream as other media)
-				if s3Config.Enabled == "true" && (s3Config.MediaDelivery == "s3" || s3Config.MediaDelivery == "both") {
+				if shouldUploadS3 {
 					isIncoming := evt.Info.IsFromMe == false
 					contactJID := evt.Info.Sender.String()
 					if evt.Info.IsGroup {
@@ -1243,14 +1304,14 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 						isIncoming,
 					)
 					if err != nil {
-						log.Error().Err(err).Msg("Failed to upload sticker to S3")
+						log.Error().Err(err).Str("userID", txtid).Str("messageID", evt.Info.ID).Bool("s3_client_ready", s3ClientReady).Str("media_delivery", normalizedMediaDelivery).Msg("Failed to upload sticker to S3")
 					} else {
 						postmap["s3"] = s3Data
 					}
 				}
 
 				// base64 (same output contract as other media)
-				if s3Config.MediaDelivery == "base64" || s3Config.MediaDelivery == "both" {
+				if shouldIncludeBase64 {
 					base64String, mimeType, err := fileToBase64(tmpPath)
 					if err != nil {
 						log.Error().Err(err).Msg("Failed to convert sticker to base64")
