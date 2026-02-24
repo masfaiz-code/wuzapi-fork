@@ -954,7 +954,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 					}
 
 					// Process S3 upload
-					s3Data, err := GetS3Manager().ProcessMediaForS3(
+					s3Data, err := GetS3Manager().ProcessMediaForS3WithFailover(
 						context.Background(),
 						txtid,
 						contactJID,
@@ -1047,7 +1047,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 					}
 
 					// Process S3 upload
-					s3Data, err := GetS3Manager().ProcessMediaForS3(
+					s3Data, err := GetS3Manager().ProcessMediaForS3WithFailover(
 						context.Background(),
 						txtid,
 						contactJID,
@@ -1145,7 +1145,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 					}
 
 					// Process S3 upload
-					s3Data, err := GetS3Manager().ProcessMediaForS3(
+					s3Data, err := GetS3Manager().ProcessMediaForS3WithFailover(
 						context.Background(),
 						txtid,
 						contactJID,
@@ -1232,7 +1232,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 					}
 
 					// Process S3 upload
-					s3Data, err := GetS3Manager().ProcessMediaForS3(
+					s3Data, err := GetS3Manager().ProcessMediaForS3WithFailover(
 						context.Background(),
 						txtid,
 						contactJID,
@@ -1316,7 +1316,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 					if evt.Info.IsGroup {
 						contactJID = evt.Info.Chat.String()
 					}
-					s3Data, err := GetS3Manager().ProcessMediaForS3(
+					s3Data, err := GetS3Manager().ProcessMediaForS3WithFailover(
 						context.Background(),
 						txtid,
 						contactJID,

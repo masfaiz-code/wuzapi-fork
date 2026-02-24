@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,32 +33,26 @@ type S3Config struct {
 
 // S3Manager manages S3 operations
 type S3Manager struct {
-	mu      sync.RWMutex
-	clients map[string]*s3.Client
-	configs map[string]*S3Config
+	mu                  sync.RWMutex
+	clients             map[string]*s3.Client
+	configs             map[string]*S3Config
+	secondaryClients    map[string]*s3.Client
+	secondaryConfigs    map[string]*S3Config
+	primaryFailureCount map[string]int
+	primaryUnhealthyTil map[string]time.Time
 }
 
 // Global S3 manager instance
 var s3Manager = &S3Manager{
-	clients: make(map[string]*s3.Client),
-	configs: make(map[string]*S3Config),
+	clients:             make(map[string]*s3.Client),
+	configs:             make(map[string]*S3Config),
+	secondaryClients:    make(map[string]*s3.Client),
+	secondaryConfigs:    make(map[string]*S3Config),
+	primaryFailureCount: make(map[string]int),
+	primaryUnhealthyTil: make(map[string]time.Time),
 }
 
-// GetS3Manager returns the global S3 manager instance
-func GetS3Manager() *S3Manager {
-	return s3Manager
-}
-
-// InitializeS3Client creates or updates S3 client for a user
-func (m *S3Manager) InitializeS3Client(userID string, config *S3Config) error {
-	if !config.Enabled {
-		m.RemoveClient(userID)
-		return nil
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+func createS3Client(config *S3Config) *s3.Client {
 	// Create custom credentials provider
 	credProvider := credentials.NewStaticCredentialsProvider(
 		config.AccessKey,
@@ -83,13 +79,93 @@ func (m *S3Manager) InitializeS3Client(userID string, config *S3Config) error {
 		cfg.EndpointResolverWithOptions = customResolver
 	}
 
-	// Create S3 client
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = config.PathStyle
 	})
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return defaultValue
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return defaultValue
+	}
+	return b
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return defaultValue
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return defaultValue
+	}
+	return n
+}
+
+func loadSecondaryS3ConfigFromEnv() *S3Config {
+	endpoint := strings.TrimSpace(os.Getenv("S3_SECONDARY_ENDPOINT"))
+	bucket := strings.TrimSpace(os.Getenv("S3_SECONDARY_BUCKET"))
+	accessKey := strings.TrimSpace(os.Getenv("S3_SECONDARY_ACCESS_KEY"))
+	secretKey := strings.TrimSpace(os.Getenv("S3_SECONDARY_SECRET_KEY"))
+
+	if endpoint == "" || bucket == "" || accessKey == "" || secretKey == "" {
+		return nil
+	}
+
+	region := strings.TrimSpace(os.Getenv("S3_SECONDARY_REGION"))
+	if region == "" {
+		region = "auto"
+	}
+
+	return &S3Config{
+		Enabled:       true,
+		Endpoint:      endpoint,
+		Region:        region,
+		Bucket:        bucket,
+		AccessKey:     accessKey,
+		SecretKey:     secretKey,
+		PathStyle:     getEnvBool("S3_SECONDARY_PATH_STYLE", true),
+		PublicURL:     strings.TrimSpace(os.Getenv("S3_SECONDARY_PUBLIC_URL")),
+		RetentionDays: getEnvInt("S3_SECONDARY_RETENTION_DAYS", 30),
+	}
+}
+
+// GetS3Manager returns the global S3 manager instance
+func GetS3Manager() *S3Manager {
+	return s3Manager
+}
+
+// InitializeS3Client creates or updates S3 client for a user
+func (m *S3Manager) InitializeS3Client(userID string, config *S3Config) error {
+	if !config.Enabled {
+		m.RemoveClient(userID)
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	client := createS3Client(config)
 
 	m.clients[userID] = client
 	m.configs[userID] = config
+	m.primaryFailureCount[userID] = 0
+	delete(m.primaryUnhealthyTil, userID)
+
+	if secondaryConfig := loadSecondaryS3ConfigFromEnv(); secondaryConfig != nil {
+		m.secondaryClients[userID] = createS3Client(secondaryConfig)
+		m.secondaryConfigs[userID] = secondaryConfig
+		log.Info().Str("userID", userID).Str("bucket", secondaryConfig.Bucket).Msg("Secondary S3 client initialized from environment")
+	} else {
+		delete(m.secondaryClients, userID)
+		delete(m.secondaryConfigs, userID)
+	}
 
 	log.Info().Str("userID", userID).Str("bucket", config.Bucket).Msg("S3 client initialized")
 	return nil
@@ -102,6 +178,10 @@ func (m *S3Manager) RemoveClient(userID string) {
 
 	delete(m.clients, userID)
 	delete(m.configs, userID)
+	delete(m.secondaryClients, userID)
+	delete(m.secondaryConfigs, userID)
+	delete(m.primaryFailureCount, userID)
+	delete(m.primaryUnhealthyTil, userID)
 }
 
 // GetClient returns S3 client for a user
@@ -111,6 +191,16 @@ func (m *S3Manager) GetClient(userID string) (*s3.Client, *S3Config, bool) {
 
 	client, clientOk := m.clients[userID]
 	config, configOk := m.configs[userID]
+
+	return client, config, clientOk && configOk
+}
+
+func (m *S3Manager) GetSecondaryClient(userID string) (*s3.Client, *S3Config, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	client, clientOk := m.secondaryClients[userID]
+	config, configOk := m.secondaryConfigs[userID]
 
 	return client, config, clientOk && configOk
 }
@@ -338,6 +428,219 @@ func (m *S3Manager) ProcessMediaForS3(ctx context.Context, userID, contactJID, m
 	}
 
 	return s3Data, nil
+}
+
+func (m *S3Manager) getFailoverThreshold() int {
+	v := getEnvInt("S3_FAILOVER_THRESHOLD", 2)
+	if v < 1 {
+		return 1
+	}
+	return v
+}
+
+func (m *S3Manager) getFailoverCooldown() time.Duration {
+	minutes := getEnvInt("S3_FAILOVER_COOLDOWN_MINUTES", 10)
+	if minutes < 1 {
+		minutes = 1
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
+func isRetryableS3Error(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "timeout") ||
+		strings.Contains(s, "tempor") ||
+		strings.Contains(s, "connection") ||
+		strings.Contains(s, "refused") ||
+		strings.Contains(s, "reset") ||
+		strings.Contains(s, "unavailable") ||
+		strings.Contains(s, "internalerror") ||
+		strings.Contains(s, "serviceunavailable") ||
+		strings.Contains(s, "throttl") ||
+		strings.Contains(s, "permanentredirect")
+}
+
+func (m *S3Manager) markPrimaryFailure(userID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.primaryFailureCount[userID] = m.primaryFailureCount[userID] + 1
+	if m.primaryFailureCount[userID] >= m.getFailoverThreshold() {
+		until := time.Now().Add(m.getFailoverCooldown())
+		m.primaryUnhealthyTil[userID] = until
+		log.Warn().Str("userID", userID).Time("primary_unhealthy_until", until).Msg("Primary S3 marked unhealthy")
+	}
+}
+
+func (m *S3Manager) markPrimarySuccess(userID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.primaryFailureCount[userID] = 0
+	delete(m.primaryUnhealthyTil, userID)
+}
+
+func (m *S3Manager) isPrimaryUnhealthy(userID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	until, ok := m.primaryUnhealthyTil[userID]
+	if !ok {
+		return false
+	}
+	return time.Now().Before(until)
+}
+
+func (m *S3Manager) ProcessMediaForS3WithFailover(ctx context.Context, userID, contactJID, messageID string,
+	data []byte, mimeType string, fileName string, isIncoming bool) (map[string]interface{}, error) {
+
+	useSecondaryFirst := m.isPrimaryUnhealthy(userID)
+
+	tryPrimary := func() (map[string]interface{}, error) {
+		result, err := m.ProcessMediaForS3(ctx, userID, contactJID, messageID, data, mimeType, fileName, isIncoming)
+		if err != nil {
+			if isRetryableS3Error(err) {
+				m.markPrimaryFailure(userID)
+			}
+			return nil, err
+		}
+
+		m.markPrimarySuccess(userID)
+		result["provider"] = "primary"
+		result["failover_used"] = false
+		return result, nil
+	}
+
+	trySecondary := func(primaryErr error) (map[string]interface{}, error) {
+		client, secondaryConfig, ok := m.GetSecondaryClient(userID)
+		if !ok {
+			if primaryErr != nil {
+				return nil, primaryErr
+			}
+			return nil, fmt.Errorf("secondary S3 client not configured")
+		}
+
+		key := m.GenerateS3Key(userID, contactJID, messageID, mimeType, isIncoming)
+		if err := m.uploadToClient(ctx, client, secondaryConfig, userID, key, data, mimeType); err != nil {
+			if primaryErr != nil {
+				return nil, fmt.Errorf("primary failed: %v; secondary failed: %w", primaryErr, err)
+			}
+			return nil, err
+		}
+
+		publicURL := m.getPublicURLFromConfig(secondaryConfig, key)
+		return map[string]interface{}{
+			"url":           publicURL,
+			"key":           key,
+			"bucket":        secondaryConfig.Bucket,
+			"size":          len(data),
+			"mimeType":      mimeType,
+			"fileName":      fileName,
+			"provider":      "secondary",
+			"failover_used": true,
+		}, nil
+	}
+
+	if useSecondaryFirst {
+		if result, err := trySecondary(nil); err == nil {
+			return result, nil
+		}
+		return tryPrimary()
+	}
+
+	primaryResult, primaryErr := tryPrimary()
+	if primaryErr == nil {
+		return primaryResult, nil
+	}
+
+	if !isRetryableS3Error(primaryErr) {
+		return nil, primaryErr
+	}
+
+	return trySecondary(primaryErr)
+}
+
+func (m *S3Manager) getPublicURLFromConfig(config *S3Config, key string) string {
+	if config.PublicURL != "" {
+		return fmt.Sprintf("%s/%s/%s", strings.TrimRight(config.PublicURL, "/"), config.Bucket, key)
+	}
+
+	if config.PathStyle {
+		return fmt.Sprintf("%s/%s/%s", strings.TrimRight(config.Endpoint, "/"), config.Bucket, key)
+	}
+
+	if strings.Contains(config.Endpoint, "amazonaws.com") {
+		return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", config.Bucket, config.Region, key)
+	}
+
+	endpoint := strings.TrimPrefix(config.Endpoint, "https://")
+	endpoint = strings.TrimPrefix(endpoint, "http://")
+	return fmt.Sprintf("https://%s.%s/%s", config.Bucket, endpoint, key)
+}
+
+func (m *S3Manager) uploadToClient(ctx context.Context, client *s3.Client, config *S3Config, userID string, key string, data []byte, mimeType string) error {
+	contentType := mimeType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	var expires *time.Time
+	if config.RetentionDays > 0 {
+		expirationTime := time.Now().Add(time.Duration(config.RetentionDays) * 24 * time.Hour)
+		expires = &expirationTime
+	}
+
+	input := &s3.PutObjectInput{
+		Bucket:       aws.String(config.Bucket),
+		Key:          aws.String(key),
+		Body:         bytes.NewReader(data),
+		ContentType:  aws.String(contentType),
+		CacheControl: aws.String("public, max-age=3600"),
+		ACL:          types.ObjectCannedACLPublicRead,
+	}
+
+	if expires != nil {
+		input.Expires = expires
+	}
+
+	if strings.HasPrefix(mimeType, "image/") || strings.HasPrefix(mimeType, "video/") || mimeType == "application/pdf" {
+		input.ContentDisposition = aws.String("inline")
+	}
+
+	_, err := client.PutObject(ctx, input)
+	if err != nil {
+		errLower := strings.ToLower(err.Error())
+		if strings.Contains(errLower, "accesscontrollistnotsupported") ||
+			strings.Contains(errLower, "acl") ||
+			strings.Contains(errLower, "x-amz-acl") {
+			inputNoACL := &s3.PutObjectInput{
+				Bucket:       input.Bucket,
+				Key:          input.Key,
+				Body:         bytes.NewReader(data),
+				ContentType:  input.ContentType,
+				CacheControl: input.CacheControl,
+				Expires:      input.Expires,
+			}
+			if input.ContentDisposition != nil {
+				inputNoACL.ContentDisposition = input.ContentDisposition
+			}
+
+			_, retryErr := client.PutObject(ctx, inputNoACL)
+			if retryErr == nil {
+				log.Warn().Str("userID", userID).Str("bucket", config.Bucket).Msg("S3 upload succeeded after retrying without ACL")
+				return nil
+			}
+
+			return fmt.Errorf("failed to upload to S3 (with ACL and without ACL): first=%v retry=%w", err, retryErr)
+		}
+
+		return fmt.Errorf("failed to upload to S3: %w", err)
+	}
+
+	return nil
 }
 
 // DeleteAllUserObjects deletes all user files from S3
