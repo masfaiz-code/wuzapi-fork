@@ -78,6 +78,11 @@ var migrations = []Migration{
 		Name:  "add_user_webhooks",
 		UpSQL: addUserWebhooksSQL,
 	},
+	{
+		ID:    10,
+		Name:  "add_s3_failover_support",
+		UpSQL: addS3FailoverSupportSQL,
+	},
 }
 
 const changeIDToStringSQL = `
@@ -676,6 +681,42 @@ func applyMigration(db *sqlx.DB, migration Migration) error {
 		} else {
 			_, err = tx.Exec(migration.UpSQL)
 		}
+	} else if migration.ID == 10 {
+		if db.DriverName() == "sqlite" {
+			err = addColumnIfNotExistsSQLite(tx, "users", "s3_secondary_enabled", "BOOLEAN DEFAULT 0")
+			if err == nil {
+				err = addColumnIfNotExistsSQLite(tx, "users", "s3_secondary_endpoint", "TEXT DEFAULT ''")
+			}
+			if err == nil {
+				err = addColumnIfNotExistsSQLite(tx, "users", "s3_secondary_region", "TEXT DEFAULT ''")
+			}
+			if err == nil {
+				err = addColumnIfNotExistsSQLite(tx, "users", "s3_secondary_bucket", "TEXT DEFAULT ''")
+			}
+			if err == nil {
+				err = addColumnIfNotExistsSQLite(tx, "users", "s3_secondary_access_key", "TEXT DEFAULT ''")
+			}
+			if err == nil {
+				err = addColumnIfNotExistsSQLite(tx, "users", "s3_secondary_secret_key", "TEXT DEFAULT ''")
+			}
+			if err == nil {
+				err = addColumnIfNotExistsSQLite(tx, "users", "s3_secondary_path_style", "BOOLEAN DEFAULT 1")
+			}
+			if err == nil {
+				err = addColumnIfNotExistsSQLite(tx, "users", "s3_secondary_public_url", "TEXT DEFAULT ''")
+			}
+			if err == nil {
+				err = addColumnIfNotExistsSQLite(tx, "users", "s3_secondary_retention_days", "INTEGER DEFAULT 30")
+			}
+			if err == nil {
+				err = addColumnIfNotExistsSQLite(tx, "users", "s3_failover_threshold", "INTEGER DEFAULT 2")
+			}
+			if err == nil {
+				err = addColumnIfNotExistsSQLite(tx, "users", "s3_failover_cooldown_minutes", "INTEGER DEFAULT 10")
+			}
+		} else {
+			_, err = tx.Exec(migration.UpSQL)
+		}
 	} else {
 		_, err = tx.Exec(migration.UpSQL)
 	}
@@ -882,6 +923,48 @@ BEGIN
     -- Add hmac_key column as BYTEA for encrypted data
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users' AND table_schema = current_schema()) AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'hmac_key' AND table_schema = current_schema()) THEN
         ALTER TABLE users ADD COLUMN hmac_key BYTEA;
+    END IF;
+END $$;
+
+-- SQLite version (handled in code)
+`
+
+const addS3FailoverSupportSQL = `
+-- PostgreSQL version
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_secondary_enabled' AND table_schema = current_schema()) THEN
+        ALTER TABLE users ADD COLUMN s3_secondary_enabled BOOLEAN DEFAULT FALSE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_secondary_endpoint' AND table_schema = current_schema()) THEN
+        ALTER TABLE users ADD COLUMN s3_secondary_endpoint TEXT DEFAULT '';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_secondary_region' AND table_schema = current_schema()) THEN
+        ALTER TABLE users ADD COLUMN s3_secondary_region TEXT DEFAULT '';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_secondary_bucket' AND table_schema = current_schema()) THEN
+        ALTER TABLE users ADD COLUMN s3_secondary_bucket TEXT DEFAULT '';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_secondary_access_key' AND table_schema = current_schema()) THEN
+        ALTER TABLE users ADD COLUMN s3_secondary_access_key TEXT DEFAULT '';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_secondary_secret_key' AND table_schema = current_schema()) THEN
+        ALTER TABLE users ADD COLUMN s3_secondary_secret_key TEXT DEFAULT '';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_secondary_path_style' AND table_schema = current_schema()) THEN
+        ALTER TABLE users ADD COLUMN s3_secondary_path_style BOOLEAN DEFAULT TRUE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_secondary_public_url' AND table_schema = current_schema()) THEN
+        ALTER TABLE users ADD COLUMN s3_secondary_public_url TEXT DEFAULT '';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_secondary_retention_days' AND table_schema = current_schema()) THEN
+        ALTER TABLE users ADD COLUMN s3_secondary_retention_days INTEGER DEFAULT 30;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_failover_threshold' AND table_schema = current_schema()) THEN
+        ALTER TABLE users ADD COLUMN s3_failover_threshold INTEGER DEFAULT 2;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_failover_cooldown_minutes' AND table_schema = current_schema()) THEN
+        ALTER TABLE users ADD COLUMN s3_failover_cooldown_minutes INTEGER DEFAULT 10;
     END IF;
 END $$;
 

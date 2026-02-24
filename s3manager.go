@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +38,8 @@ type S3Manager struct {
 	secondaryConfigs    map[string]*S3Config
 	primaryFailureCount map[string]int
 	primaryUnhealthyTil map[string]time.Time
+	failoverThreshold   map[string]int
+	failoverCooldown    map[string]time.Duration
 }
 
 // Global S3 manager instance
@@ -50,6 +50,8 @@ var s3Manager = &S3Manager{
 	secondaryConfigs:    make(map[string]*S3Config),
 	primaryFailureCount: make(map[string]int),
 	primaryUnhealthyTil: make(map[string]time.Time),
+	failoverThreshold:   make(map[string]int),
+	failoverCooldown:    make(map[string]time.Duration),
 }
 
 func createS3Client(config *S3Config) *s3.Client {
@@ -84,58 +86,6 @@ func createS3Client(config *S3Config) *s3.Client {
 	})
 }
 
-func getEnvBool(key string, defaultValue bool) bool {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return defaultValue
-	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return defaultValue
-	}
-	return b
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return defaultValue
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return defaultValue
-	}
-	return n
-}
-
-func loadSecondaryS3ConfigFromEnv() *S3Config {
-	endpoint := strings.TrimSpace(os.Getenv("S3_SECONDARY_ENDPOINT"))
-	bucket := strings.TrimSpace(os.Getenv("S3_SECONDARY_BUCKET"))
-	accessKey := strings.TrimSpace(os.Getenv("S3_SECONDARY_ACCESS_KEY"))
-	secretKey := strings.TrimSpace(os.Getenv("S3_SECONDARY_SECRET_KEY"))
-
-	if endpoint == "" || bucket == "" || accessKey == "" || secretKey == "" {
-		return nil
-	}
-
-	region := strings.TrimSpace(os.Getenv("S3_SECONDARY_REGION"))
-	if region == "" {
-		region = "auto"
-	}
-
-	return &S3Config{
-		Enabled:       true,
-		Endpoint:      endpoint,
-		Region:        region,
-		Bucket:        bucket,
-		AccessKey:     accessKey,
-		SecretKey:     secretKey,
-		PathStyle:     getEnvBool("S3_SECONDARY_PATH_STYLE", true),
-		PublicURL:     strings.TrimSpace(os.Getenv("S3_SECONDARY_PUBLIC_URL")),
-		RetentionDays: getEnvInt("S3_SECONDARY_RETENTION_DAYS", 30),
-	}
-}
-
 // GetS3Manager returns the global S3 manager instance
 func GetS3Manager() *S3Manager {
 	return s3Manager
@@ -157,18 +107,34 @@ func (m *S3Manager) InitializeS3Client(userID string, config *S3Config) error {
 	m.configs[userID] = config
 	m.primaryFailureCount[userID] = 0
 	delete(m.primaryUnhealthyTil, userID)
+	m.failoverThreshold[userID] = 2
+	m.failoverCooldown[userID] = 10 * time.Minute
 
-	if secondaryConfig := loadSecondaryS3ConfigFromEnv(); secondaryConfig != nil {
+	log.Info().Str("userID", userID).Str("bucket", config.Bucket).Msg("S3 client initialized")
+	return nil
+}
+
+func (m *S3Manager) ConfigureFailover(userID string, secondaryConfig *S3Config, threshold int, cooldownMinutes int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if secondaryConfig != nil && secondaryConfig.Enabled {
 		m.secondaryClients[userID] = createS3Client(secondaryConfig)
 		m.secondaryConfigs[userID] = secondaryConfig
-		log.Info().Str("userID", userID).Str("bucket", secondaryConfig.Bucket).Msg("Secondary S3 client initialized from environment")
 	} else {
 		delete(m.secondaryClients, userID)
 		delete(m.secondaryConfigs, userID)
 	}
 
-	log.Info().Str("userID", userID).Str("bucket", config.Bucket).Msg("S3 client initialized")
-	return nil
+	if threshold < 1 {
+		threshold = 2
+	}
+	if cooldownMinutes < 1 {
+		cooldownMinutes = 10
+	}
+
+	m.failoverThreshold[userID] = threshold
+	m.failoverCooldown[userID] = time.Duration(cooldownMinutes) * time.Minute
 }
 
 // RemoveClient removes S3 client for a user
@@ -182,6 +148,8 @@ func (m *S3Manager) RemoveClient(userID string) {
 	delete(m.secondaryConfigs, userID)
 	delete(m.primaryFailureCount, userID)
 	delete(m.primaryUnhealthyTil, userID)
+	delete(m.failoverThreshold, userID)
+	delete(m.failoverCooldown, userID)
 }
 
 // GetClient returns S3 client for a user
@@ -430,20 +398,26 @@ func (m *S3Manager) ProcessMediaForS3(ctx context.Context, userID, contactJID, m
 	return s3Data, nil
 }
 
-func (m *S3Manager) getFailoverThreshold() int {
-	v := getEnvInt("S3_FAILOVER_THRESHOLD", 2)
-	if v < 1 {
-		return 1
+func (m *S3Manager) getFailoverThresholdForUser(userID string) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	v, ok := m.failoverThreshold[userID]
+	if !ok || v < 1 {
+		return 2
 	}
 	return v
 }
 
-func (m *S3Manager) getFailoverCooldown() time.Duration {
-	minutes := getEnvInt("S3_FAILOVER_COOLDOWN_MINUTES", 10)
-	if minutes < 1 {
-		minutes = 1
+func (m *S3Manager) getFailoverCooldownForUser(userID string) time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	v, ok := m.failoverCooldown[userID]
+	if !ok || v < time.Minute {
+		return 10 * time.Minute
 	}
-	return time.Duration(minutes) * time.Minute
+	return v
 }
 
 func isRetryableS3Error(err error) bool {
@@ -468,8 +442,8 @@ func (m *S3Manager) markPrimaryFailure(userID string) {
 	defer m.mu.Unlock()
 
 	m.primaryFailureCount[userID] = m.primaryFailureCount[userID] + 1
-	if m.primaryFailureCount[userID] >= m.getFailoverThreshold() {
-		until := time.Now().Add(m.getFailoverCooldown())
+	if m.primaryFailureCount[userID] >= m.getFailoverThresholdForUser(userID) {
+		until := time.Now().Add(m.getFailoverCooldownForUser(userID))
 		m.primaryUnhealthyTil[userID] = until
 		log.Warn().Str("userID", userID).Time("primary_unhealthy_until", until).Msg("Primary S3 marked unhealthy")
 	}

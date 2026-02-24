@@ -837,22 +837,35 @@ func (s *server) GetStatus() http.HandlerFunc {
 
 		var s3Enabled bool
 		var s3Endpoint, s3Region, s3Bucket, s3PublicURL, s3MediaDelivery string
+		var s3SecondaryEndpoint, s3SecondaryRegion, s3SecondaryBucket, s3SecondaryPublicURL string
 		var s3PathStyle bool
+		var s3SecondaryEnabled, s3SecondaryPathStyle bool
 		var s3RetentionDays int
+		var s3SecondaryRetentionDays, s3FailoverThreshold, s3FailoverCooldownMinutes int
 
 		// Start with safe defaults so the field is always present in the response
 		s3Config := map[string]interface{}{
-			"enabled":        false,
-			"endpoint":       "",
-			"region":         "",
-			"bucket":         "",
-			"access_key":     "***",
-			"path_style":     false,
-			"public_url":     "",
-			"media_delivery": "",
-			"retention_days": 0,
+			"enabled":                   false,
+			"endpoint":                  "",
+			"region":                    "",
+			"bucket":                    "",
+			"access_key":                "***",
+			"path_style":                false,
+			"public_url":                "",
+			"media_delivery":            "",
+			"retention_days":            0,
+			"secondary_enabled":         false,
+			"secondary_endpoint":        "",
+			"secondary_region":          "",
+			"secondary_bucket":          "",
+			"secondary_access_key":      "***",
+			"secondary_path_style":      true,
+			"secondary_public_url":      "",
+			"secondary_retention_days":  30,
+			"failover_threshold":        2,
+			"failover_cooldown_minutes": 10,
 		}
-		err := s.db.QueryRow(`SELECT COALESCE(s3_enabled, false), COALESCE(s3_endpoint, ''), COALESCE(s3_region, ''), COALESCE(s3_bucket, ''), COALESCE(s3_path_style, false), COALESCE(s3_public_url, ''), COALESCE(media_delivery, ''), COALESCE(s3_retention_days, 0) FROM users WHERE id = $1`, txtid).Scan(&s3Enabled, &s3Endpoint, &s3Region, &s3Bucket, &s3PathStyle, &s3PublicURL, &s3MediaDelivery, &s3RetentionDays)
+		err := s.db.QueryRow(`SELECT COALESCE(s3_enabled, false), COALESCE(s3_endpoint, ''), COALESCE(s3_region, ''), COALESCE(s3_bucket, ''), COALESCE(s3_path_style, false), COALESCE(s3_public_url, ''), COALESCE(media_delivery, ''), COALESCE(s3_retention_days, 0), COALESCE(s3_secondary_enabled, false), COALESCE(s3_secondary_endpoint, ''), COALESCE(s3_secondary_region, ''), COALESCE(s3_secondary_bucket, ''), COALESCE(s3_secondary_path_style, true), COALESCE(s3_secondary_public_url, ''), COALESCE(s3_secondary_retention_days, 30), COALESCE(s3_failover_threshold, 2), COALESCE(s3_failover_cooldown_minutes, 10) FROM users WHERE id = $1`, txtid).Scan(&s3Enabled, &s3Endpoint, &s3Region, &s3Bucket, &s3PathStyle, &s3PublicURL, &s3MediaDelivery, &s3RetentionDays, &s3SecondaryEnabled, &s3SecondaryEndpoint, &s3SecondaryRegion, &s3SecondaryBucket, &s3SecondaryPathStyle, &s3SecondaryPublicURL, &s3SecondaryRetentionDays, &s3FailoverThreshold, &s3FailoverCooldownMinutes)
 
 		if err == nil {
 			// Overwrite defaults with actual values if the query succeeded
@@ -864,6 +877,15 @@ func (s *server) GetStatus() http.HandlerFunc {
 			s3Config["public_url"] = s3PublicURL
 			s3Config["media_delivery"] = s3MediaDelivery
 			s3Config["retention_days"] = s3RetentionDays
+			s3Config["secondary_enabled"] = s3SecondaryEnabled
+			s3Config["secondary_endpoint"] = s3SecondaryEndpoint
+			s3Config["secondary_region"] = s3SecondaryRegion
+			s3Config["secondary_bucket"] = s3SecondaryBucket
+			s3Config["secondary_path_style"] = s3SecondaryPathStyle
+			s3Config["secondary_public_url"] = s3SecondaryPublicURL
+			s3Config["secondary_retention_days"] = s3SecondaryRetentionDays
+			s3Config["failover_threshold"] = s3FailoverThreshold
+			s3Config["failover_cooldown_minutes"] = s3FailoverCooldownMinutes
 		} else {
 			if err != sql.ErrNoRows {
 				log.Warn().Err(err).Str("user_id", txtid).Msg("Failed to query S3 config for user")
@@ -4783,21 +4805,34 @@ func (s *server) ListUsers() http.HandlerFunc {
 			// Add s3_config (search S3 fields in the database)
 			var s3Enabled bool
 			var s3Endpoint, s3Region, s3Bucket, s3PublicURL, s3MediaDelivery string
+			var s3SecondaryEndpoint, s3SecondaryRegion, s3SecondaryBucket, s3SecondaryPublicURL string
 			var s3PathStyle bool
+			var s3SecondaryEnabled, s3SecondaryPathStyle bool
 			var s3RetentionDays int
+			var s3SecondaryRetentionDays, s3FailoverThreshold, s3FailoverCooldownMinutes int
 			// Start with safe defaults so the field is always present in the response
 			s3Config := map[string]interface{}{
-				"enabled":        false,
-				"endpoint":       "",
-				"region":         "",
-				"bucket":         "",
-				"access_key":     "***",
-				"path_style":     false,
-				"public_url":     "",
-				"media_delivery": "",
-				"retention_days": 0,
+				"enabled":                   false,
+				"endpoint":                  "",
+				"region":                    "",
+				"bucket":                    "",
+				"access_key":                "***",
+				"path_style":                false,
+				"public_url":                "",
+				"media_delivery":            "",
+				"retention_days":            0,
+				"secondary_enabled":         false,
+				"secondary_endpoint":        "",
+				"secondary_region":          "",
+				"secondary_bucket":          "",
+				"secondary_access_key":      "***",
+				"secondary_path_style":      true,
+				"secondary_public_url":      "",
+				"secondary_retention_days":  30,
+				"failover_threshold":        2,
+				"failover_cooldown_minutes": 10,
 			}
-			err = s.db.QueryRow(`SELECT COALESCE(s3_enabled, false), COALESCE(s3_endpoint, ''), COALESCE(s3_region, ''), COALESCE(s3_bucket, ''), COALESCE(s3_path_style, false), COALESCE(s3_public_url, ''), COALESCE(media_delivery, ''), COALESCE(s3_retention_days, 0) FROM users WHERE id = $1`, user.Id).Scan(&s3Enabled, &s3Endpoint, &s3Region, &s3Bucket, &s3PathStyle, &s3PublicURL, &s3MediaDelivery, &s3RetentionDays)
+			err = s.db.QueryRow(`SELECT COALESCE(s3_enabled, false), COALESCE(s3_endpoint, ''), COALESCE(s3_region, ''), COALESCE(s3_bucket, ''), COALESCE(s3_path_style, false), COALESCE(s3_public_url, ''), COALESCE(media_delivery, ''), COALESCE(s3_retention_days, 0), COALESCE(s3_secondary_enabled, false), COALESCE(s3_secondary_endpoint, ''), COALESCE(s3_secondary_region, ''), COALESCE(s3_secondary_bucket, ''), COALESCE(s3_secondary_path_style, true), COALESCE(s3_secondary_public_url, ''), COALESCE(s3_secondary_retention_days, 30), COALESCE(s3_failover_threshold, 2), COALESCE(s3_failover_cooldown_minutes, 10) FROM users WHERE id = $1`, user.Id).Scan(&s3Enabled, &s3Endpoint, &s3Region, &s3Bucket, &s3PathStyle, &s3PublicURL, &s3MediaDelivery, &s3RetentionDays, &s3SecondaryEnabled, &s3SecondaryEndpoint, &s3SecondaryRegion, &s3SecondaryBucket, &s3SecondaryPathStyle, &s3SecondaryPublicURL, &s3SecondaryRetentionDays, &s3FailoverThreshold, &s3FailoverCooldownMinutes)
 			if err == nil {
 				// Overwrite defaults with actual values if the query succeeded
 				s3Config["enabled"] = s3Enabled
@@ -4808,6 +4843,15 @@ func (s *server) ListUsers() http.HandlerFunc {
 				s3Config["public_url"] = s3PublicURL
 				s3Config["media_delivery"] = s3MediaDelivery
 				s3Config["retention_days"] = s3RetentionDays
+				s3Config["secondary_enabled"] = s3SecondaryEnabled
+				s3Config["secondary_endpoint"] = s3SecondaryEndpoint
+				s3Config["secondary_region"] = s3SecondaryRegion
+				s3Config["secondary_bucket"] = s3SecondaryBucket
+				s3Config["secondary_path_style"] = s3SecondaryPathStyle
+				s3Config["secondary_public_url"] = s3SecondaryPublicURL
+				s3Config["secondary_retention_days"] = s3SecondaryRetentionDays
+				s3Config["failover_threshold"] = s3FailoverThreshold
+				s3Config["failover_cooldown_minutes"] = s3FailoverCooldownMinutes
 			} else {
 				if err != sql.ErrNoRows {
 					log.Warn().Err(err).Str("user_id", user.Id).Msg("Failed to query S3 config for user")
@@ -5003,9 +5047,11 @@ func (s *server) AddUser() http.HandlerFunc {
 
 		// Insert user with all proxy, S3 and HMAC fields
 		if _, err = s.db.Exec(
-			"INSERT INTO users (id, name, token, webhook, expiration, events, jid, qrcode, proxy_url, s3_enabled, s3_endpoint, s3_region, s3_bucket, s3_access_key, s3_secret_key, s3_path_style, s3_public_url, media_delivery, s3_retention_days, hmac_key, history) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)",
+			"INSERT INTO users (id, name, token, webhook, expiration, events, jid, qrcode, proxy_url, s3_enabled, s3_endpoint, s3_region, s3_bucket, s3_access_key, s3_secret_key, s3_path_style, s3_public_url, media_delivery, s3_retention_days, s3_secondary_enabled, s3_secondary_endpoint, s3_secondary_region, s3_secondary_bucket, s3_secondary_access_key, s3_secondary_secret_key, s3_secondary_path_style, s3_secondary_public_url, s3_secondary_retention_days, s3_failover_threshold, s3_failover_cooldown_minutes, hmac_key, history) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)",
 			id, user.Name, user.Token, user.Webhook, user.Expiration, user.Events, "", "", user.ProxyConfig.ProxyURL,
-			user.S3Config.Enabled, user.S3Config.Endpoint, user.S3Config.Region, user.S3Config.Bucket, user.S3Config.AccessKey, user.S3Config.SecretKey, user.S3Config.PathStyle, user.S3Config.PublicURL, user.S3Config.MediaDelivery, user.S3Config.RetentionDays, encryptedHmacKey, user.History,
+			user.S3Config.Enabled, user.S3Config.Endpoint, user.S3Config.Region, user.S3Config.Bucket, user.S3Config.AccessKey, user.S3Config.SecretKey, user.S3Config.PathStyle, user.S3Config.PublicURL, user.S3Config.MediaDelivery, user.S3Config.RetentionDays,
+			false, "", "", "", "", "", true, "", 30, 2, 10,
+			encryptedHmacKey, user.History,
 		); err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("admin DB error")
 			s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
@@ -5061,6 +5107,7 @@ func (s *server) AddUser() http.HandlerFunc {
 				RetentionDays: user.S3Config.RetentionDays,
 			}
 			_ = GetS3Manager().InitializeS3Client(id, s3Config)
+			GetS3Manager().ConfigureFailover(id, nil, 2, 10)
 		}
 
 		// Build response like GET /admin/users
@@ -5805,6 +5852,19 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 		PublicURL     string `json:"public_url"`
 		MediaDelivery string `json:"media_delivery"`
 		RetentionDays int    `json:"retention_days"`
+
+		SecondaryEnabled       bool   `json:"secondary_enabled"`
+		SecondaryEndpoint      string `json:"secondary_endpoint"`
+		SecondaryRegion        string `json:"secondary_region"`
+		SecondaryBucket        string `json:"secondary_bucket"`
+		SecondaryAccessKey     string `json:"secondary_access_key"`
+		SecondarySecretKey     string `json:"secondary_secret_key"`
+		SecondaryPathStyle     bool   `json:"secondary_path_style"`
+		SecondaryPublicURL     string `json:"secondary_public_url"`
+		SecondaryRetentionDays int    `json:"secondary_retention_days"`
+
+		FailoverThreshold       int `json:"failover_threshold"`
+		FailoverCooldownMinutes int `json:"failover_cooldown_minutes"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -5828,6 +5888,20 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 			t.MediaDelivery = "base64"
 		}
 
+		if t.SecondaryEnabled {
+			if strings.TrimSpace(t.SecondaryEndpoint) == "" || strings.TrimSpace(t.SecondaryBucket) == "" || strings.TrimSpace(t.SecondaryAccessKey) == "" || strings.TrimSpace(t.SecondarySecretKey) == "" {
+				s.Respond(w, r, http.StatusBadRequest, errors.New("secondary S3 requires endpoint, bucket, access_key, and secret_key"))
+				return
+			}
+		}
+
+		if t.FailoverThreshold < 1 {
+			t.FailoverThreshold = 2
+		}
+		if t.FailoverCooldownMinutes < 1 {
+			t.FailoverCooldownMinutes = 10
+		}
+
 		// Update database
 		_, err = s.db.Exec(`
 			UPDATE users SET 
@@ -5840,10 +5914,24 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 				s3_path_style = $7,
 				s3_public_url = $8,
 				media_delivery = $9,
-				s3_retention_days = $10
-			WHERE id = $11`,
+				s3_retention_days = $10,
+				s3_secondary_enabled = $11,
+				s3_secondary_endpoint = $12,
+				s3_secondary_region = $13,
+				s3_secondary_bucket = $14,
+				s3_secondary_access_key = $15,
+				s3_secondary_secret_key = $16,
+				s3_secondary_path_style = $17,
+				s3_secondary_public_url = $18,
+				s3_secondary_retention_days = $19,
+				s3_failover_threshold = $20,
+				s3_failover_cooldown_minutes = $21
+			WHERE id = $22`,
 			t.Enabled, t.Endpoint, t.Region, t.Bucket, t.AccessKey, t.SecretKey,
-			t.PathStyle, t.PublicURL, t.MediaDelivery, t.RetentionDays, txtid)
+			t.PathStyle, t.PublicURL, t.MediaDelivery, t.RetentionDays,
+			t.SecondaryEnabled, t.SecondaryEndpoint, t.SecondaryRegion, t.SecondaryBucket,
+			t.SecondaryAccessKey, t.SecondarySecretKey, t.SecondaryPathStyle, t.SecondaryPublicURL,
+			t.SecondaryRetentionDays, t.FailoverThreshold, t.FailoverCooldownMinutes, txtid)
 
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to save S3 configuration"))
@@ -5869,6 +5957,23 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 				s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to initialize S3 client: %v", err)))
 				return
 			}
+
+			var secondaryConfig *S3Config
+			if t.SecondaryEnabled {
+				secondaryConfig = &S3Config{
+					Enabled:       true,
+					Endpoint:      t.SecondaryEndpoint,
+					Region:        t.SecondaryRegion,
+					Bucket:        t.SecondaryBucket,
+					AccessKey:     t.SecondaryAccessKey,
+					SecretKey:     t.SecondarySecretKey,
+					PathStyle:     t.SecondaryPathStyle,
+					PublicURL:     t.SecondaryPublicURL,
+					RetentionDays: t.SecondaryRetentionDays,
+				}
+			}
+
+			GetS3Manager().ConfigureFailover(txtid, secondaryConfig, t.FailoverThreshold, t.FailoverCooldownMinutes)
 		} else {
 			GetS3Manager().RemoveClient(txtid)
 		}
@@ -5889,6 +5994,17 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3PublicURL", t.PublicURL).(Values)
 			updatedUserInfo = updateUserInfo(updatedUserInfo, "MediaDelivery", t.MediaDelivery).(Values)
 			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3RetentionDays", strconv.Itoa(t.RetentionDays)).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3SecondaryEnabled", strconv.FormatBool(t.SecondaryEnabled)).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3SecondaryEndpoint", t.SecondaryEndpoint).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3SecondaryRegion", t.SecondaryRegion).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3SecondaryBucket", t.SecondaryBucket).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3SecondaryAccessKey", t.SecondaryAccessKey).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3SecondarySecretKey", t.SecondarySecretKey).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3SecondaryPathStyle", strconv.FormatBool(t.SecondaryPathStyle)).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3SecondaryPublicURL", t.SecondaryPublicURL).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3SecondaryRetentionDays", strconv.Itoa(t.SecondaryRetentionDays)).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3FailoverThreshold", strconv.Itoa(t.FailoverThreshold)).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3FailoverCooldownMinutes", strconv.Itoa(t.FailoverCooldownMinutes)).(Values)
 
 			userinfocache.Set(token, updatedUserInfo, cache.NoExpiration)
 			log.Info().Str("userID", txtid).Msg("User info cache updated with S3 configuration")
@@ -5922,6 +6038,18 @@ func (s *server) GetS3Config() http.HandlerFunc {
 			PublicURL     string `json:"public_url" db:"public_url"`
 			MediaDelivery string `json:"media_delivery" db:"media_delivery"`
 			RetentionDays int    `json:"retention_days" db:"retention_days"`
+
+			SecondaryEnabled       bool   `json:"secondary_enabled" db:"secondary_enabled"`
+			SecondaryEndpoint      string `json:"secondary_endpoint" db:"secondary_endpoint"`
+			SecondaryRegion        string `json:"secondary_region" db:"secondary_region"`
+			SecondaryBucket        string `json:"secondary_bucket" db:"secondary_bucket"`
+			SecondaryAccessKey     string `json:"secondary_access_key" db:"secondary_access_key"`
+			SecondaryPathStyle     bool   `json:"secondary_path_style" db:"secondary_path_style"`
+			SecondaryPublicURL     string `json:"secondary_public_url" db:"secondary_public_url"`
+			SecondaryRetentionDays int    `json:"secondary_retention_days" db:"secondary_retention_days"`
+
+			FailoverThreshold       int `json:"failover_threshold" db:"failover_threshold"`
+			FailoverCooldownMinutes int `json:"failover_cooldown_minutes" db:"failover_cooldown_minutes"`
 		}
 
 		err := s.db.Get(&config, `
@@ -5934,7 +6062,17 @@ func (s *server) GetS3Config() http.HandlerFunc {
 				s3_path_style as path_style,
 				s3_public_url as public_url,
 				media_delivery,
-				s3_retention_days as retention_days
+				s3_retention_days as retention_days,
+				COALESCE(s3_secondary_enabled, false) as secondary_enabled,
+				COALESCE(s3_secondary_endpoint, '') as secondary_endpoint,
+				COALESCE(s3_secondary_region, '') as secondary_region,
+				COALESCE(s3_secondary_bucket, '') as secondary_bucket,
+				COALESCE(s3_secondary_access_key, '') as secondary_access_key,
+				COALESCE(s3_secondary_path_style, true) as secondary_path_style,
+				COALESCE(s3_secondary_public_url, '') as secondary_public_url,
+				COALESCE(s3_secondary_retention_days, 30) as secondary_retention_days,
+				COALESCE(s3_failover_threshold, 2) as failover_threshold,
+				COALESCE(s3_failover_cooldown_minutes, 10) as failover_cooldown_minutes
 			FROM users WHERE id = $1`, txtid)
 
 		if err != nil {
@@ -6061,7 +6199,18 @@ func (s *server) DeleteS3Config() http.HandlerFunc {
 				s3_path_style = true,
 				s3_public_url = '',
 				media_delivery = 'base64',
-				s3_retention_days = 30
+				s3_retention_days = 30,
+				s3_secondary_enabled = false,
+				s3_secondary_endpoint = '',
+				s3_secondary_region = '',
+				s3_secondary_bucket = '',
+				s3_secondary_access_key = '',
+				s3_secondary_secret_key = '',
+				s3_secondary_path_style = true,
+				s3_secondary_public_url = '',
+				s3_secondary_retention_days = 30,
+				s3_failover_threshold = 2,
+				s3_failover_cooldown_minutes = 10
 			WHERE id = $1`, txtid)
 
 		if err != nil {

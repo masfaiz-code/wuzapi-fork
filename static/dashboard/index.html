@@ -507,6 +507,62 @@
           </div>
           <small>Enable for MinIO and some S3-compatible providers.</small>
         </div>
+
+        <div class="ui divider"></div>
+        <h4 class="ui dividing header">Secondary S3 (Failover)</h4>
+        <div class="field">
+          <div class="ui toggle checkbox">
+            <input type="checkbox" id="s3SecondaryEnabled">
+            <label>Enable Secondary S3 Failover</label>
+          </div>
+          <small>Automatically use secondary storage when primary fails.</small>
+        </div>
+        <div class="field">
+          <label>Secondary S3 Endpoint URL</label>
+          <input id="s3SecondaryEndpoint" type="text" placeholder="https://backup-s3.example.com">
+        </div>
+        <div class="field">
+          <label>Secondary Access Key ID</label>
+          <input id="s3SecondaryAccessKey" type="text" placeholder="Backup S3 access key ID">
+        </div>
+        <div class="field">
+          <label>Secondary Secret Access Key</label>
+          <input id="s3SecondarySecretKey" type="password" placeholder="Backup S3 secret access key">
+        </div>
+        <div class="field">
+          <label>Secondary Bucket Name</label>
+          <input id="s3SecondaryBucket" type="text" placeholder="Backup S3 bucket name">
+        </div>
+        <div class="field">
+          <label>Secondary Region</label>
+          <input id="s3SecondaryRegion" type="text" placeholder="us-east-1">
+        </div>
+        <div class="field">
+          <label>Secondary Public URL (Optional)</label>
+          <input id="s3SecondaryPublicUrl" type="text" placeholder="https://backup-cdn.example.com">
+        </div>
+        <div class="field">
+          <label>Secondary Retention Days</label>
+          <input id="s3SecondaryRetentionDays" type="number" min="1" value="30" placeholder="30">
+        </div>
+        <div class="field">
+          <div class="ui toggle checkbox">
+            <input type="checkbox" id="s3SecondaryForcePathStyle">
+            <label>Secondary Force Path Style</label>
+          </div>
+        </div>
+        <div class="two fields">
+          <div class="field">
+            <label>Failover Threshold</label>
+            <input id="s3FailoverThreshold" type="number" min="1" value="2" placeholder="2">
+            <small>Number of primary failures before marking unhealthy.</small>
+          </div>
+          <div class="field">
+            <label>Failover Cooldown (minutes)</label>
+            <input id="s3FailoverCooldownMinutes" type="number" min="1" value="10" placeholder="10">
+            <small>How long to prefer secondary after threshold is reached.</small>
+          </div>
+        </div>
       </div>
     </div>
     <div class="actions">

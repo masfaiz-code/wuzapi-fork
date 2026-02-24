@@ -308,21 +308,43 @@ func (s *server) connectOnStartup() {
 			// Initialize S3 client if configured
 			go func(userID string) {
 				var s3Config struct {
-					Enabled       bool   `db:"s3_enabled"`
-					Endpoint      string `db:"s3_endpoint"`
-					Region        string `db:"s3_region"`
-					Bucket        string `db:"s3_bucket"`
-					AccessKey     string `db:"s3_access_key"`
-					SecretKey     string `db:"s3_secret_key"`
-					PathStyle     bool   `db:"s3_path_style"`
-					PublicURL     string `db:"s3_public_url"`
-					RetentionDays int    `db:"s3_retention_days"`
+					Enabled                 bool   `db:"s3_enabled"`
+					Endpoint                string `db:"s3_endpoint"`
+					Region                  string `db:"s3_region"`
+					Bucket                  string `db:"s3_bucket"`
+					AccessKey               string `db:"s3_access_key"`
+					SecretKey               string `db:"s3_secret_key"`
+					PathStyle               bool   `db:"s3_path_style"`
+					PublicURL               string `db:"s3_public_url"`
+					RetentionDays           int    `db:"s3_retention_days"`
+					SecondaryEnabled        bool   `db:"s3_secondary_enabled"`
+					SecondaryEndpoint       string `db:"s3_secondary_endpoint"`
+					SecondaryRegion         string `db:"s3_secondary_region"`
+					SecondaryBucket         string `db:"s3_secondary_bucket"`
+					SecondaryAccessKey      string `db:"s3_secondary_access_key"`
+					SecondarySecretKey      string `db:"s3_secondary_secret_key"`
+					SecondaryPathStyle      bool   `db:"s3_secondary_path_style"`
+					SecondaryPublicURL      string `db:"s3_secondary_public_url"`
+					SecondaryRetentionDays  int    `db:"s3_secondary_retention_days"`
+					FailoverThreshold       int    `db:"s3_failover_threshold"`
+					FailoverCooldownMinutes int    `db:"s3_failover_cooldown_minutes"`
 				}
 
 				err := s.db.Get(&s3Config, `
 					SELECT s3_enabled, s3_endpoint, s3_region, s3_bucket, 
 						   s3_access_key, s3_secret_key, s3_path_style, 
-						   s3_public_url, s3_retention_days
+						   s3_public_url, s3_retention_days,
+						   COALESCE(s3_secondary_enabled, false) as s3_secondary_enabled,
+						   COALESCE(s3_secondary_endpoint, '') as s3_secondary_endpoint,
+						   COALESCE(s3_secondary_region, '') as s3_secondary_region,
+						   COALESCE(s3_secondary_bucket, '') as s3_secondary_bucket,
+						   COALESCE(s3_secondary_access_key, '') as s3_secondary_access_key,
+						   COALESCE(s3_secondary_secret_key, '') as s3_secondary_secret_key,
+						   COALESCE(s3_secondary_path_style, true) as s3_secondary_path_style,
+						   COALESCE(s3_secondary_public_url, '') as s3_secondary_public_url,
+						   COALESCE(s3_secondary_retention_days, 30) as s3_secondary_retention_days,
+						   COALESCE(s3_failover_threshold, 2) as s3_failover_threshold,
+						   COALESCE(s3_failover_cooldown_minutes, 10) as s3_failover_cooldown_minutes
 					FROM users WHERE id = $1`, userID)
 
 				if err != nil {
@@ -347,6 +369,21 @@ func (s *server) connectOnStartup() {
 					if err != nil {
 						log.Error().Err(err).Str("userID", userID).Msg("Failed to initialize S3 client on startup")
 					} else {
+						var secondaryConfig *S3Config
+						if s3Config.SecondaryEnabled {
+							secondaryConfig = &S3Config{
+								Enabled:       true,
+								Endpoint:      s3Config.SecondaryEndpoint,
+								Region:        s3Config.SecondaryRegion,
+								Bucket:        s3Config.SecondaryBucket,
+								AccessKey:     s3Config.SecondaryAccessKey,
+								SecretKey:     s3Config.SecondarySecretKey,
+								PathStyle:     s3Config.SecondaryPathStyle,
+								PublicURL:     s3Config.SecondaryPublicURL,
+								RetentionDays: s3Config.SecondaryRetentionDays,
+							}
+						}
+						GetS3Manager().ConfigureFailover(userID, secondaryConfig, s3Config.FailoverThreshold, s3Config.FailoverCooldownMinutes)
 						log.Info().Str("userID", userID).Msg("S3 client initialized on startup")
 					}
 				}

@@ -2011,6 +2011,19 @@ async function loadS3Config() {
     
     // Retention days
     $('#s3RetentionDays').val(s3Config.retention_days || 30);
+
+    // Secondary failover config
+    $('#s3SecondaryEnabled').prop('checked', !!s3Config.secondary_enabled);
+    $('#s3SecondaryEndpoint').val(s3Config.secondary_endpoint || '');
+    $('#s3SecondaryAccessKey').val(s3Config.secondary_access_key === '***' ? '' : (s3Config.secondary_access_key || ''));
+    $('#s3SecondarySecretKey').val('');
+    $('#s3SecondaryBucket').val(s3Config.secondary_bucket || '');
+    $('#s3SecondaryRegion').val(s3Config.secondary_region || '');
+    $('#s3SecondaryForcePathStyle').prop('checked', s3Config.secondary_path_style !== false);
+    $('#s3SecondaryPublicUrl').val(s3Config.secondary_public_url || '');
+    $('#s3SecondaryRetentionDays').val(s3Config.secondary_retention_days || 30);
+    $('#s3FailoverThreshold').val(s3Config.failover_threshold || 2);
+    $('#s3FailoverCooldownMinutes').val(s3Config.failover_cooldown_minutes || 10);
     
     // Show/hide delete button based on whether config exists
     if (hasConfig) {
@@ -2051,6 +2064,19 @@ async function loadS3Config() {
         
         // Retention days
         $('#s3RetentionDays').val(data.data.retention_days || 30);
+
+        // Secondary failover config
+        $('#s3SecondaryEnabled').prop('checked', !!data.data.secondary_enabled);
+        $('#s3SecondaryEndpoint').val(data.data.secondary_endpoint || '');
+        $('#s3SecondaryAccessKey').val(data.data.secondary_access_key === '***' ? '' : (data.data.secondary_access_key || ''));
+        $('#s3SecondarySecretKey').val('');
+        $('#s3SecondaryBucket').val(data.data.secondary_bucket || '');
+        $('#s3SecondaryRegion').val(data.data.secondary_region || '');
+        $('#s3SecondaryForcePathStyle').prop('checked', data.data.secondary_path_style !== false);
+        $('#s3SecondaryPublicUrl').val(data.data.secondary_public_url || '');
+        $('#s3SecondaryRetentionDays').val(data.data.secondary_retention_days || 30);
+        $('#s3FailoverThreshold').val(data.data.failover_threshold || 2);
+        $('#s3FailoverCooldownMinutes').val(data.data.failover_cooldown_minutes || 10);
         
         // Show/hide delete button based on whether config exists
         if (hasConfig) {
@@ -2070,6 +2096,17 @@ async function loadS3Config() {
         $('#s3PublicUrl').val('');
         $('#s3MediaDelivery').dropdown('set selected', 'base64');
         $('#s3RetentionDays').val(30);
+        $('#s3SecondaryEnabled').prop('checked', false);
+        $('#s3SecondaryEndpoint').val('');
+        $('#s3SecondaryAccessKey').val('');
+        $('#s3SecondarySecretKey').val('');
+        $('#s3SecondaryBucket').val('');
+        $('#s3SecondaryRegion').val('');
+        $('#s3SecondaryForcePathStyle').prop('checked', true);
+        $('#s3SecondaryPublicUrl').val('');
+        $('#s3SecondaryRetentionDays').val(30);
+        $('#s3FailoverThreshold').val(2);
+        $('#s3FailoverCooldownMinutes').val(10);
       }
     }
   } catch (error) {
@@ -2094,7 +2131,18 @@ async function saveS3Config() {
     path_style: $('#s3ForcePathStyle').is(':checked'),
     public_url: $('#s3PublicUrl').val().trim(),
     media_delivery: $('#s3MediaDelivery').val() || 'base64',
-    retention_days: parseInt($('#s3RetentionDays').val()) || 30
+    retention_days: parseInt($('#s3RetentionDays').val()) || 30,
+    secondary_enabled: $('#s3SecondaryEnabled').is(':checked'),
+    secondary_endpoint: $('#s3SecondaryEndpoint').val().trim(),
+    secondary_access_key: $('#s3SecondaryAccessKey').val().trim(),
+    secondary_secret_key: $('#s3SecondarySecretKey').val().trim(),
+    secondary_bucket: $('#s3SecondaryBucket').val().trim(),
+    secondary_region: $('#s3SecondaryRegion').val().trim(),
+    secondary_path_style: $('#s3SecondaryForcePathStyle').is(':checked'),
+    secondary_public_url: $('#s3SecondaryPublicUrl').val().trim(),
+    secondary_retention_days: parseInt($('#s3SecondaryRetentionDays').val()) || 30,
+    failover_threshold: parseInt($('#s3FailoverThreshold').val()) || 2,
+    failover_cooldown_minutes: parseInt($('#s3FailoverCooldownMinutes').val()) || 10
   };
   
   try {
@@ -2199,6 +2247,17 @@ async function deleteS3Config() {
       $('#s3PublicUrl').val('');
       $('#s3MediaDelivery').dropdown('set selected', 'base64');
       $('#s3RetentionDays').val(30);
+      $('#s3SecondaryEnabled').prop('checked', false);
+      $('#s3SecondaryEndpoint').val('');
+      $('#s3SecondaryAccessKey').val('');
+      $('#s3SecondarySecretKey').val('');
+      $('#s3SecondaryBucket').val('');
+      $('#s3SecondaryRegion').val('');
+      $('#s3SecondaryForcePathStyle').prop('checked', true);
+      $('#s3SecondaryPublicUrl').val('');
+      $('#s3SecondaryRetentionDays').val(30);
+      $('#s3FailoverThreshold').val(2);
+      $('#s3FailoverCooldownMinutes').val(10);
       
       // Hide delete button
       $('#deleteS3Config').hide();
