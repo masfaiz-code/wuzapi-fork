@@ -103,6 +103,7 @@ func (s *server) routes() {
 	s.router.Handle("/session/s3/config", c.Then(s.GetS3Config())).Methods("GET")
 	s.router.Handle("/session/s3/config", c.Then(s.DeleteS3Config())).Methods("DELETE")
 	s.router.Handle("/session/s3/config/delete", c.Then(s.DeleteS3Config())).Methods("POST")
+	s.router.Handle("/session/s3/schema", c.Then(s.GetS3SchemaStatus())).Methods("GET")
 	s.router.Handle("/session/s3/test", c.Then(s.TestS3Connection())).Methods("POST")
 
 	s.router.Handle("/session/hmac/config", c.Then(s.ConfigureHmac())).Methods("POST")

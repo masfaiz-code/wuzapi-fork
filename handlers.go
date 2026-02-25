@@ -5903,6 +5903,19 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 		}
 
 		hasFailoverColumns := supportsS3FailoverColumns(s.db)
+		log.Info().
+			Str("userID", txtid).
+			Bool("has_failover_columns", hasFailoverColumns).
+			Bool("enabled", t.Enabled).
+			Str("endpoint", t.Endpoint).
+			Str("bucket", t.Bucket).
+			Str("media_delivery", t.MediaDelivery).
+			Bool("secondary_enabled", t.SecondaryEnabled).
+			Str("secondary_endpoint", t.SecondaryEndpoint).
+			Str("secondary_bucket", t.SecondaryBucket).
+			Int("failover_threshold", t.FailoverThreshold).
+			Int("failover_cooldown_minutes", t.FailoverCooldownMinutes).
+			Msg("ConfigureS3 request received")
 
 		// Update database
 		if hasFailoverColumns {
@@ -5954,9 +5967,16 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 		}
 
 		if err != nil {
+			log.Error().
+				Err(err).
+				Str("userID", txtid).
+				Bool("has_failover_columns", hasFailoverColumns).
+				Msg("ConfigureS3 database update failed")
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to save S3 configuration"))
 			return
 		}
+
+		log.Info().Str("userID", txtid).Bool("has_failover_columns", hasFailoverColumns).Msg("ConfigureS3 database update succeeded")
 
 		// Initialize S3 client if enabled
 		if t.Enabled {
@@ -5974,6 +5994,7 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 
 			err = GetS3Manager().InitializeS3Client(txtid, s3Config)
 			if err != nil {
+				log.Error().Err(err).Str("userID", txtid).Msg("ConfigureS3 primary S3 client init failed")
 				s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to initialize S3 client: %v", err)))
 				return
 			}
@@ -5995,11 +6016,14 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 
 			if hasFailoverColumns {
 				GetS3Manager().ConfigureFailover(txtid, secondaryConfig, t.FailoverThreshold, t.FailoverCooldownMinutes)
+				log.Info().Str("userID", txtid).Bool("secondary_enabled", t.SecondaryEnabled).Msg("ConfigureS3 failover configured")
 			} else {
 				GetS3Manager().ConfigureFailover(txtid, nil, 2, 10)
+				log.Info().Str("userID", txtid).Msg("ConfigureS3 fallback mode: failover columns unavailable")
 			}
 		} else {
 			GetS3Manager().RemoveClient(txtid)
+			log.Info().Str("userID", txtid).Msg("ConfigureS3 disabled and removed S3 client")
 		}
 
 		// Update userinfocache with S3 configuration
@@ -6052,6 +6076,7 @@ func (s *server) GetS3Config() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
 		hasFailoverColumns := supportsS3FailoverColumns(s.db)
+		log.Info().Str("userID", txtid).Bool("has_failover_columns", hasFailoverColumns).Msg("GetS3Config request received")
 
 		var config struct {
 			Enabled       bool   `json:"enabled" db:"enabled"`
@@ -6131,6 +6156,19 @@ func (s *server) GetS3Config() http.HandlerFunc {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to get S3 configuration"))
 			return
 		}
+
+		log.Info().
+			Str("userID", txtid).
+			Bool("enabled", config.Enabled).
+			Str("endpoint", config.Endpoint).
+			Str("bucket", config.Bucket).
+			Str("media_delivery", config.MediaDelivery).
+			Bool("secondary_enabled", config.SecondaryEnabled).
+			Str("secondary_endpoint", config.SecondaryEndpoint).
+			Str("secondary_bucket", config.SecondaryBucket).
+			Int("failover_threshold", config.FailoverThreshold).
+			Int("failover_cooldown_minutes", config.FailoverCooldownMinutes).
+			Msg("GetS3Config database read succeeded")
 
 		log.Debug().Str("userID", txtid).Bool("enabled", config.Enabled).Str("endpoint", config.Endpoint).Str("bucket", config.Bucket).Msg("Retrieved S3 configuration from database")
 
@@ -6297,6 +6335,29 @@ func (s *server) DeleteS3Config() http.HandlerFunc {
 		} else {
 			s.Respond(w, r, http.StatusOK, string(responseJson))
 		}
+	}
+}
+
+// Get S3 Schema Status (diagnostic endpoint)
+func (s *server) GetS3SchemaStatus() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		supported := supportsS3FailoverColumns(s.db)
+
+		payload := map[string]interface{}{
+			"user_id":              txtid,
+			"supports_failover":    supported,
+			"driver":               s.db.DriverName(),
+			"diagnostic_timestamp": time.Now().Format(time.RFC3339),
+		}
+
+		responseJson, err := json.Marshal(payload)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+			return
+		}
+
+		s.Respond(w, r, http.StatusOK, string(responseJson))
 	}
 }
 
