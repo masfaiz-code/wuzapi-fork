@@ -6058,6 +6058,18 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 			log.Info().Str("userID", txtid).Msg("User info cache updated with S3 configuration")
 		}
 
+		if mycli := clientManager.GetMyClient(txtid); mycli != nil {
+			if mycli.token != "" && mycli.token != token {
+				if cachedClientUserInfo, found := userinfocache.Get(mycli.token); found {
+					updatedClientUserInfo := cachedClientUserInfo.(Values)
+					updatedClientUserInfo = updateUserInfo(updatedClientUserInfo, "S3Enabled", strconv.FormatBool(t.Enabled)).(Values)
+					updatedClientUserInfo = updateUserInfo(updatedClientUserInfo, "MediaDelivery", t.MediaDelivery).(Values)
+					userinfocache.Set(mycli.token, updatedClientUserInfo, cache.NoExpiration)
+					log.Info().Str("userID", txtid).Str("cache_token", mycli.token).Msg("S3 cache synced for active client token")
+				}
+			}
+		}
+
 		response := map[string]interface{}{
 			"Details": "S3 configuration saved successfully",
 			"Enabled": t.Enabled,

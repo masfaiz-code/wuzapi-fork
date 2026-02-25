@@ -862,10 +862,25 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				s3Config.MediaDelivery = "base64"
 			}
 		} else {
-			s3Config.Enabled = myuserinfo.(Values).Get("S3Enabled")
-			s3Config.MediaDelivery = myuserinfo.(Values).Get("MediaDelivery")
-			if s3Config.MediaDelivery == "" {
-				s3Config.MediaDelivery = "base64"
+			cacheToken := myuserinfo.(Values).Get("Token")
+			if cacheToken != mycli.token {
+				log.Warn().
+					Str("userID", txtid).
+					Str("event_token", mycli.token).
+					Str("cache_token", cacheToken).
+					Msg("S3 config cache token mismatch; loading from database")
+				err := mycli.db.Get(&s3Config, "SELECT CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled, COALESCE(media_delivery, 'base64') as media_delivery FROM users WHERE id = $1", txtid)
+				if err != nil {
+					log.Error().Err(err).Msg("onMessage Failed to get S3 config from DB after cache token mismatch")
+					s3Config.Enabled = "false"
+					s3Config.MediaDelivery = "base64"
+				}
+			} else {
+				s3Config.Enabled = myuserinfo.(Values).Get("S3Enabled")
+				s3Config.MediaDelivery = myuserinfo.(Values).Get("MediaDelivery")
+				if s3Config.MediaDelivery == "" {
+					s3Config.MediaDelivery = "base64"
+				}
 			}
 		}
 
