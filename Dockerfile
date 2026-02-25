@@ -2,11 +2,6 @@ FROM golang:1.24-bullseye AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     pkg-config \
@@ -19,22 +14,13 @@ RUN go mod download
 
 COPY . .
 ENV CGO_ENABLED=1
-RUN go build -o wuzapi
+RUN go build -ldflags="-s -w" -o wuzapi .
 
 FROM debian:bullseye-slim
 
+# Install runtime dependencies (keep minimal for faster image pull)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    netcat-openbsd \
-    postgresql-client \
-    openssl \
-    curl \
     ffmpeg \
     tzdata \
     && rm -rf /var/lib/apt/lists/*
