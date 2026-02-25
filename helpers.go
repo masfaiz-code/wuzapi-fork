@@ -42,6 +42,60 @@ import (
 	"github.com/vincent-petithory/dataurl"
 )
 
+var s3FailoverColumnsCache sync.Map
+
+func supportsS3FailoverColumns(db *sqlx.DB) bool {
+	if db == nil {
+		return false
+	}
+
+	cacheKey := fmt.Sprintf("%p:%s", db, db.DriverName())
+	if cached, ok := s3FailoverColumnsCache.Load(cacheKey); ok {
+		if supported, okCast := cached.(bool); okCast {
+			return supported
+		}
+	}
+
+	supported := false
+	if db.DriverName() == "postgres" {
+		var count int
+		err := db.Get(&count, `
+			SELECT COUNT(*)
+			FROM information_schema.columns
+			WHERE table_name = 'users'
+			  AND table_schema = current_schema()
+			  AND column_name IN ('s3_secondary_enabled', 's3_failover_threshold')`)
+		supported = err == nil && count == 2
+	} else {
+		rows, err := db.Queryx(`PRAGMA table_info(users)`)
+		if err == nil {
+			defer rows.Close()
+			hasSecondary := false
+			hasThreshold := false
+			for rows.Next() {
+				var cid int
+				var name, ctype string
+				var notnull int
+				var dfltValue interface{}
+				var pk int
+				if scanErr := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); scanErr != nil {
+					continue
+				}
+				if name == "s3_secondary_enabled" {
+					hasSecondary = true
+				}
+				if name == "s3_failover_threshold" {
+					hasThreshold = true
+				}
+			}
+			supported = hasSecondary && hasThreshold
+		}
+	}
+
+	s3FailoverColumnsCache.Store(cacheKey, supported)
+	return supported
+}
+
 const (
 	openGraphFetchTimeout    = 5 * time.Second
 	openGraphPageMaxBytes    = 2 * 1024 * 1024  // 2MB

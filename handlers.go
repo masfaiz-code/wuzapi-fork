@@ -5902,8 +5902,11 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 			t.FailoverCooldownMinutes = 10
 		}
 
+		hasFailoverColumns := supportsS3FailoverColumns(s.db)
+
 		// Update database
-		_, err = s.db.Exec(`
+		if hasFailoverColumns {
+			_, err = s.db.Exec(`
 			UPDATE users SET 
 				s3_enabled = $1,
 				s3_endpoint = $2,
@@ -5927,11 +5930,28 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 				s3_failover_threshold = $20,
 				s3_failover_cooldown_minutes = $21
 			WHERE id = $22`,
-			t.Enabled, t.Endpoint, t.Region, t.Bucket, t.AccessKey, t.SecretKey,
-			t.PathStyle, t.PublicURL, t.MediaDelivery, t.RetentionDays,
-			t.SecondaryEnabled, t.SecondaryEndpoint, t.SecondaryRegion, t.SecondaryBucket,
-			t.SecondaryAccessKey, t.SecondarySecretKey, t.SecondaryPathStyle, t.SecondaryPublicURL,
-			t.SecondaryRetentionDays, t.FailoverThreshold, t.FailoverCooldownMinutes, txtid)
+				t.Enabled, t.Endpoint, t.Region, t.Bucket, t.AccessKey, t.SecretKey,
+				t.PathStyle, t.PublicURL, t.MediaDelivery, t.RetentionDays,
+				t.SecondaryEnabled, t.SecondaryEndpoint, t.SecondaryRegion, t.SecondaryBucket,
+				t.SecondaryAccessKey, t.SecondarySecretKey, t.SecondaryPathStyle, t.SecondaryPublicURL,
+				t.SecondaryRetentionDays, t.FailoverThreshold, t.FailoverCooldownMinutes, txtid)
+		} else {
+			_, err = s.db.Exec(`
+			UPDATE users SET 
+				s3_enabled = $1,
+				s3_endpoint = $2,
+				s3_region = $3,
+				s3_bucket = $4,
+				s3_access_key = $5,
+				s3_secret_key = $6,
+				s3_path_style = $7,
+				s3_public_url = $8,
+				media_delivery = $9,
+				s3_retention_days = $10
+			WHERE id = $11`,
+				t.Enabled, t.Endpoint, t.Region, t.Bucket, t.AccessKey, t.SecretKey,
+				t.PathStyle, t.PublicURL, t.MediaDelivery, t.RetentionDays, txtid)
+		}
 
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to save S3 configuration"))
@@ -5959,7 +5979,7 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 			}
 
 			var secondaryConfig *S3Config
-			if t.SecondaryEnabled {
+			if hasFailoverColumns && t.SecondaryEnabled {
 				secondaryConfig = &S3Config{
 					Enabled:       true,
 					Endpoint:      t.SecondaryEndpoint,
@@ -5973,7 +5993,11 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 				}
 			}
 
-			GetS3Manager().ConfigureFailover(txtid, secondaryConfig, t.FailoverThreshold, t.FailoverCooldownMinutes)
+			if hasFailoverColumns {
+				GetS3Manager().ConfigureFailover(txtid, secondaryConfig, t.FailoverThreshold, t.FailoverCooldownMinutes)
+			} else {
+				GetS3Manager().ConfigureFailover(txtid, nil, 2, 10)
+			}
 		} else {
 			GetS3Manager().RemoveClient(txtid)
 		}
@@ -6027,6 +6051,7 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 func (s *server) GetS3Config() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		hasFailoverColumns := supportsS3FailoverColumns(s.db)
 
 		var config struct {
 			Enabled       bool   `json:"enabled" db:"enabled"`
@@ -6052,28 +6077,54 @@ func (s *server) GetS3Config() http.HandlerFunc {
 			FailoverCooldownMinutes int `json:"failover_cooldown_minutes" db:"failover_cooldown_minutes"`
 		}
 
-		err := s.db.Get(&config, `
-			SELECT 
-				s3_enabled as enabled,
-				s3_endpoint as endpoint,
-				s3_region as region,
-				s3_bucket as bucket,
-				s3_access_key as access_key,
-				s3_path_style as path_style,
-				s3_public_url as public_url,
-				media_delivery,
-				s3_retention_days as retention_days,
-				COALESCE(s3_secondary_enabled, false) as secondary_enabled,
-				COALESCE(s3_secondary_endpoint, '') as secondary_endpoint,
-				COALESCE(s3_secondary_region, '') as secondary_region,
-				COALESCE(s3_secondary_bucket, '') as secondary_bucket,
-				COALESCE(s3_secondary_access_key, '') as secondary_access_key,
-				COALESCE(s3_secondary_path_style, true) as secondary_path_style,
-				COALESCE(s3_secondary_public_url, '') as secondary_public_url,
-				COALESCE(s3_secondary_retention_days, 30) as secondary_retention_days,
-				COALESCE(s3_failover_threshold, 2) as failover_threshold,
-				COALESCE(s3_failover_cooldown_minutes, 10) as failover_cooldown_minutes
-			FROM users WHERE id = $1`, txtid)
+		var err error
+		if hasFailoverColumns {
+			err = s.db.Get(&config, `
+				SELECT 
+					s3_enabled as enabled,
+					s3_endpoint as endpoint,
+					s3_region as region,
+					s3_bucket as bucket,
+					s3_access_key as access_key,
+					s3_path_style as path_style,
+					s3_public_url as public_url,
+					media_delivery,
+					s3_retention_days as retention_days,
+					COALESCE(s3_secondary_enabled, false) as secondary_enabled,
+					COALESCE(s3_secondary_endpoint, '') as secondary_endpoint,
+					COALESCE(s3_secondary_region, '') as secondary_region,
+					COALESCE(s3_secondary_bucket, '') as secondary_bucket,
+					COALESCE(s3_secondary_access_key, '') as secondary_access_key,
+					COALESCE(s3_secondary_path_style, true) as secondary_path_style,
+					COALESCE(s3_secondary_public_url, '') as secondary_public_url,
+					COALESCE(s3_secondary_retention_days, 30) as secondary_retention_days,
+					COALESCE(s3_failover_threshold, 2) as failover_threshold,
+					COALESCE(s3_failover_cooldown_minutes, 10) as failover_cooldown_minutes
+				FROM users WHERE id = $1`, txtid)
+		} else {
+			err = s.db.Get(&config, `
+				SELECT 
+					s3_enabled as enabled,
+					s3_endpoint as endpoint,
+					s3_region as region,
+					s3_bucket as bucket,
+					s3_access_key as access_key,
+					s3_path_style as path_style,
+					s3_public_url as public_url,
+					media_delivery,
+					s3_retention_days as retention_days,
+					false as secondary_enabled,
+					'' as secondary_endpoint,
+					'' as secondary_region,
+					'' as secondary_bucket,
+					'' as secondary_access_key,
+					true as secondary_path_style,
+					'' as secondary_public_url,
+					30 as secondary_retention_days,
+					2 as failover_threshold,
+					10 as failover_cooldown_minutes
+				FROM users WHERE id = $1`, txtid)
+		}
 
 		if err != nil {
 			log.Error().Err(err).Str("userID", txtid).Msg("Failed to get S3 configuration from database")
@@ -6186,32 +6237,50 @@ func (s *server) TestS3Connection() http.HandlerFunc {
 func (s *server) DeleteS3Config() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		hasFailoverColumns := supportsS3FailoverColumns(s.db)
 
 		// Update database to remove S3 configuration
-		_, err := s.db.Exec(`
-			UPDATE users SET 
-				s3_enabled = false,
-				s3_endpoint = '',
-				s3_region = '',
-				s3_bucket = '',
-				s3_access_key = '',
-				s3_secret_key = '',
-				s3_path_style = true,
-				s3_public_url = '',
-				media_delivery = 'base64',
-				s3_retention_days = 30,
-				s3_secondary_enabled = false,
-				s3_secondary_endpoint = '',
-				s3_secondary_region = '',
-				s3_secondary_bucket = '',
-				s3_secondary_access_key = '',
-				s3_secondary_secret_key = '',
-				s3_secondary_path_style = true,
-				s3_secondary_public_url = '',
-				s3_secondary_retention_days = 30,
-				s3_failover_threshold = 2,
-				s3_failover_cooldown_minutes = 10
-			WHERE id = $1`, txtid)
+		var err error
+		if hasFailoverColumns {
+			_, err = s.db.Exec(`
+				UPDATE users SET 
+					s3_enabled = false,
+					s3_endpoint = '',
+					s3_region = '',
+					s3_bucket = '',
+					s3_access_key = '',
+					s3_secret_key = '',
+					s3_path_style = true,
+					s3_public_url = '',
+					media_delivery = 'base64',
+					s3_retention_days = 30,
+					s3_secondary_enabled = false,
+					s3_secondary_endpoint = '',
+					s3_secondary_region = '',
+					s3_secondary_bucket = '',
+					s3_secondary_access_key = '',
+					s3_secondary_secret_key = '',
+					s3_secondary_path_style = true,
+					s3_secondary_public_url = '',
+					s3_secondary_retention_days = 30,
+					s3_failover_threshold = 2,
+					s3_failover_cooldown_minutes = 10
+				WHERE id = $1`, txtid)
+		} else {
+			_, err = s.db.Exec(`
+				UPDATE users SET 
+					s3_enabled = false,
+					s3_endpoint = '',
+					s3_region = '',
+					s3_bucket = '',
+					s3_access_key = '',
+					s3_secret_key = '',
+					s3_path_style = true,
+					s3_public_url = '',
+					media_delivery = 'base64',
+					s3_retention_days = 30
+				WHERE id = $1`, txtid)
+		}
 
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to delete S3 configuration"))
