@@ -237,6 +237,48 @@ func TestSessionStatus(t *testing.T) {
 	}
 }
 
+func TestSessionStatusContainsS3ConfigFields(t *testing.T) {
+	s := makeTestServer(t)
+
+	// Create user
+	addRequest := newRequest("1", "admin.users.add", map[string]interface{}{
+		"adminToken": "test-admin-token",
+		"name":       "S3User",
+		"token":      "s3-user-token",
+	}).toJSON(t)
+	addResponse := executeRequest(t, s, addRequest)
+	if addResponse["error"] != nil {
+		t.Fatalf("add user failed: %v", addResponse["error"])
+	}
+
+	// Read status
+	statusRequest := newRequest("2", "session.status", map[string]interface{}{
+		"token": "s3-user-token",
+	}).toJSON(t)
+	statusResponse := executeRequest(t, s, statusRequest)
+	if statusResponse["error"] != nil {
+		t.Fatalf("status request failed: %v", statusResponse["error"])
+	}
+
+	result := statusResponse["result"].(map[string]interface{})
+	s3Raw, ok := result["s3_config"]
+	if !ok {
+		t.Fatalf("expected s3_config in session.status response")
+	}
+
+	s3Config, ok := s3Raw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected s3_config to be an object")
+	}
+
+	if _, ok := s3Config["media_delivery"]; !ok {
+		t.Fatalf("expected media_delivery field in s3_config")
+	}
+	if _, ok := s3Config["enabled"]; !ok {
+		t.Fatalf("expected enabled field in s3_config")
+	}
+}
+
 // Note: session.connect, session.disconnect, session.logout tests are skipped
 // because they require full WhatsApp/whatsmeow initialization which is complex
 // to set up in unit tests. The routing is tested via session.status.
