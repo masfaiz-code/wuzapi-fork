@@ -38,6 +38,7 @@ type MyClient struct {
 	eventHandlerID uint32
 	userID         string
 	token          string
+	sessionToken   string
 	subscriptions  []string
 	db             *sqlx.DB
 	s              *server
@@ -459,7 +460,7 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
 	store.DeviceProps.Os = osName
 
-	mycli := MyClient{client, 1, userID, token, subscriptions, s.db, s}
+	mycli := MyClient{client, 1, userID, token, token, subscriptions, s.db, s}
 	mycli.eventHandlerID = mycli.WAClient.AddEventHandler(mycli.myEventHandler)
 
 	// Store the MyClient in clientManager
@@ -853,7 +854,11 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		}
 
 		lastMessageCache.Set(mycli.userID, &evt.Info, cache.DefaultExpiration)
-		myuserinfo, found := userinfocache.Get(mycli.token)
+		cacheToken := mycli.sessionToken
+		if cacheToken == "" {
+			cacheToken = mycli.token
+		}
+		myuserinfo, found := userinfocache.Get(cacheToken)
 		if !found {
 			err := mycli.db.Get(&s3Config, "SELECT CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled, COALESCE(media_delivery, 'base64') as media_delivery FROM users WHERE id = $1", txtid)
 			if err != nil {
@@ -862,12 +867,12 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				s3Config.MediaDelivery = "base64"
 			}
 		} else {
-			cacheToken := myuserinfo.(Values).Get("Token")
-			if cacheToken != mycli.token {
+			cacheTokenInEntry := myuserinfo.(Values).Get("Token")
+			if cacheTokenInEntry != mycli.token {
 				log.Warn().
 					Str("userID", txtid).
 					Str("event_token", mycli.token).
-					Str("cache_token", cacheToken).
+					Str("cache_token", cacheTokenInEntry).
 					Msg("S3 config cache token mismatch; loading from database")
 				err := mycli.db.Get(&s3Config, "SELECT CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled, COALESCE(media_delivery, 'base64') as media_delivery FROM users WHERE id = $1", txtid)
 				if err != nil {
