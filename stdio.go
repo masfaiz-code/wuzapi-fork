@@ -278,6 +278,18 @@ func (ss *stdioServer) routeRequest(req *jsonRpcRequest) {
 	case "session.hmac.config.delete":
 		httpMethod = "DELETE"
 		httpPath = "/session/hmac/config"
+	case "session.s3.config":
+		httpMethod = "POST"
+		httpPath = "/session/s3/config"
+	case "session.s3.config.get":
+		httpMethod = "GET"
+		httpPath = "/session/s3/config"
+	case "session.s3.config.delete":
+		httpMethod = "DELETE"
+		httpPath = "/session/s3/config"
+	case "session.s3.test":
+		httpMethod = "POST"
+		httpPath = "/session/s3/test"
 
 	// Messaging
 	case "chat.send.text":

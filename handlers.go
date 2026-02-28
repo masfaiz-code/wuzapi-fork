@@ -5892,7 +5892,47 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 			t.MediaDelivery = "base64"
 		}
 
+		if strings.TrimSpace(t.AccessKey) == "***" {
+			var existingAccessKey string
+			err = s.db.Get(&existingAccessKey, "SELECT COALESCE(s3_access_key, '') FROM users WHERE id = $1", txtid)
+			if err != nil {
+				s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to load existing primary access key"))
+				return
+			}
+			t.AccessKey = existingAccessKey
+		}
+
+		if strings.TrimSpace(t.SecretKey) == "" {
+			var existingSecretKey string
+			err = s.db.Get(&existingSecretKey, "SELECT COALESCE(s3_secret_key, '') FROM users WHERE id = $1", txtid)
+			if err != nil {
+				s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to load existing primary secret key"))
+				return
+			}
+			t.SecretKey = existingSecretKey
+		}
+
 		if t.SecondaryEnabled {
+			if strings.TrimSpace(t.SecondaryAccessKey) == "***" {
+				var existingSecondaryAccessKey string
+				err = s.db.Get(&existingSecondaryAccessKey, "SELECT COALESCE(s3_secondary_access_key, '') FROM users WHERE id = $1", txtid)
+				if err != nil {
+					s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to load existing secondary access key"))
+					return
+				}
+				t.SecondaryAccessKey = existingSecondaryAccessKey
+			}
+
+			if strings.TrimSpace(t.SecondarySecretKey) == "" {
+				var existingSecondarySecretKey string
+				err = s.db.Get(&existingSecondarySecretKey, "SELECT COALESCE(s3_secondary_secret_key, '') FROM users WHERE id = $1", txtid)
+				if err != nil {
+					s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to load existing secondary secret key"))
+					return
+				}
+				t.SecondarySecretKey = existingSecondarySecretKey
+			}
+
 			if strings.TrimSpace(t.SecondaryEndpoint) == "" || strings.TrimSpace(t.SecondaryBucket) == "" || strings.TrimSpace(t.SecondaryAccessKey) == "" || strings.TrimSpace(t.SecondarySecretKey) == "" {
 				s.Respond(w, r, http.StatusBadRequest, errors.New("secondary S3 requires endpoint, bucket, access_key, and secret_key"))
 				return

@@ -279,6 +279,139 @@ func TestSessionStatusContainsS3ConfigFields(t *testing.T) {
 	}
 }
 
+func TestConfigureS3PreservesSecondarySecretWhenBlank(t *testing.T) {
+	s := makeTestServer(t)
+
+	// Create user
+	addRequest := newRequest("1", "admin.users.add", map[string]interface{}{
+		"adminToken": "test-admin-token",
+		"name":       "FailoverUser",
+		"token":      "failover-token",
+	}).toJSON(t)
+	addResponse := executeRequest(t, s, addRequest)
+	if addResponse["error"] != nil {
+		t.Fatalf("add user failed: %v", addResponse["error"])
+	}
+
+	// First save with full secondary credentials
+	firstSave := newRequest("2", "session.s3.config", map[string]interface{}{
+		"token":                    "failover-token",
+		"enabled":                  true,
+		"endpoint":                 "https://primary.example.com",
+		"region":                   "auto",
+		"bucket":                   "primary-bucket",
+		"access_key":               "primary-access",
+		"secret_key":               "primary-secret",
+		"path_style":               true,
+		"media_delivery":           "both",
+		"retention_days":           30,
+		"secondary_enabled":        true,
+		"secondary_endpoint":       "https://secondary.example.com",
+		"secondary_region":         "auto",
+		"secondary_bucket":         "secondary-bucket",
+		"secondary_access_key":     "secondary-access",
+		"secondary_secret_key":     "secondary-secret",
+		"secondary_path_style":     true,
+		"secondary_retention_days": 30,
+	}).toJSON(t)
+	firstSaveResp := executeRequest(t, s, firstSave)
+	if firstSaveResp["error"] != nil {
+		t.Fatalf("first s3 save failed: %v", firstSaveResp["error"])
+	}
+
+	// Second save mimics UI behavior: blank secret field on update
+	secondSave := newRequest("3", "session.s3.config", map[string]interface{}{
+		"token":                    "failover-token",
+		"enabled":                  true,
+		"endpoint":                 "https://primary.example.com",
+		"region":                   "auto",
+		"bucket":                   "primary-bucket",
+		"access_key":               "primary-access",
+		"secret_key":               "primary-secret",
+		"path_style":               true,
+		"media_delivery":           "both",
+		"retention_days":           30,
+		"secondary_enabled":        true,
+		"secondary_endpoint":       "https://secondary.example.com",
+		"secondary_region":         "auto",
+		"secondary_bucket":         "secondary-bucket",
+		"secondary_access_key":     "secondary-access",
+		"secondary_secret_key":     "",
+		"secondary_path_style":     true,
+		"secondary_retention_days": 30,
+	}).toJSON(t)
+	secondSaveResp := executeRequest(t, s, secondSave)
+	if secondSaveResp["error"] != nil {
+		t.Fatalf("second s3 save failed: %v", secondSaveResp["error"])
+	}
+
+	var secret string
+	err := s.db.Get(&secret, "SELECT COALESCE(s3_secondary_secret_key, '') FROM users WHERE token = ?", "failover-token")
+	if err != nil {
+		t.Fatalf("failed to query secondary secret: %v", err)
+	}
+	if secret != "secondary-secret" {
+		t.Fatalf("expected secondary secret preserved, got %q", secret)
+	}
+}
+
+func TestConfigureS3PreservesPrimarySecretWhenBlank(t *testing.T) {
+	s := makeTestServer(t)
+
+	addRequest := newRequest("1", "admin.users.add", map[string]interface{}{
+		"adminToken": "test-admin-token",
+		"name":       "PrimarySecretUser",
+		"token":      "primary-secret-token",
+	}).toJSON(t)
+	addResponse := executeRequest(t, s, addRequest)
+	if addResponse["error"] != nil {
+		t.Fatalf("add user failed: %v", addResponse["error"])
+	}
+
+	firstSave := newRequest("2", "session.s3.config", map[string]interface{}{
+		"token":          "primary-secret-token",
+		"enabled":        true,
+		"endpoint":       "https://primary.example.com",
+		"region":         "auto",
+		"bucket":         "primary-bucket",
+		"access_key":     "primary-access",
+		"secret_key":     "primary-secret",
+		"path_style":     true,
+		"media_delivery": "both",
+		"retention_days": 30,
+	}).toJSON(t)
+	firstSaveResp := executeRequest(t, s, firstSave)
+	if firstSaveResp["error"] != nil {
+		t.Fatalf("first save failed: %v", firstSaveResp["error"])
+	}
+
+	secondSave := newRequest("3", "session.s3.config", map[string]interface{}{
+		"token":          "primary-secret-token",
+		"enabled":        true,
+		"endpoint":       "https://primary.example.com",
+		"region":         "auto",
+		"bucket":         "primary-bucket",
+		"access_key":     "primary-access",
+		"secret_key":     "",
+		"path_style":     true,
+		"media_delivery": "both",
+		"retention_days": 30,
+	}).toJSON(t)
+	secondSaveResp := executeRequest(t, s, secondSave)
+	if secondSaveResp["error"] != nil {
+		t.Fatalf("second save failed: %v", secondSaveResp["error"])
+	}
+
+	var secret string
+	err := s.db.Get(&secret, "SELECT COALESCE(s3_secret_key, '') FROM users WHERE token = ?", "primary-secret-token")
+	if err != nil {
+		t.Fatalf("failed to query primary secret: %v", err)
+	}
+	if secret != "primary-secret" {
+		t.Fatalf("expected primary secret preserved, got %q", secret)
+	}
+}
+
 // Note: session.connect, session.disconnect, session.logout tests are skipped
 // because they require full WhatsApp/whatsmeow initialization which is complex
 // to set up in unit tests. The routing is tested via session.status.
