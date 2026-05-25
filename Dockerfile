@@ -1,4 +1,4 @@
-FROM golang:1.24-bullseye AS builder
+FROM golang:1.25-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -16,7 +16,7 @@ COPY . .
 ENV CGO_ENABLED=1
 RUN go build -ldflags="-s -w" -o wuzapi .
 
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 # Install runtime dependencies (keep minimal for faster image pull)
 RUN apt-get update && apt-get install -y --no-install-recommends \
